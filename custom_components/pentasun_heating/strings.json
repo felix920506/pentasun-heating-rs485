@@ -1,0 +1,159 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "How are the thermostats connected?",
+        "description": "Choose how Home Assistant reaches the RS485 bus the thermostats are wired to.",
+        "menu_options": {
+          "serial": "USB / RS485 adapter on this machine",
+          "rfc2217": "Serial device server (RFC 2217 / Telnet COM port mode)",
+          "rtu_over_tcp": "Serial device server (raw TCP socket mode)",
+          "modbus_tcp": "Modbus TCP gateway (converts to Modbus RTU)"
+        }
+      },
+      "reconfigure": {
+        "title": "How are the thermostats connected?",
+        "description": "Choose the new way Home Assistant reaches the RS485 bus.",
+        "menu_options": {
+          "serial": "USB / RS485 adapter on this machine",
+          "rfc2217": "Serial device server (RFC 2217 / Telnet COM port mode)",
+          "rtu_over_tcp": "Serial device server (raw TCP socket mode)",
+          "modbus_tcp": "Modbus TCP gateway (converts to Modbus RTU)"
+        }
+      },
+      "serial": {
+        "title": "RS485 adapter",
+        "data": {
+          "device": "Serial port",
+          "baudrate": "Baud rate",
+          "parity": "Parity",
+          "stopbits": "Stop bits"
+        },
+        "data_description": {
+          "device": "Prefer a /dev/serial/by-id/… path so the port survives reboots.",
+          "baudrate": "The thermostats use 9600 baud, 8 data bits, no parity, 1 stop bit by default."
+        }
+      },
+      "rfc2217": {
+        "title": "Serial device server (RFC 2217)",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "baudrate": "Baud rate",
+          "parity": "Parity",
+          "stopbits": "Stop bits"
+        },
+        "data_description": {
+          "host": "IP address or host name of the serial device server.",
+          "baudrate": "With RFC 2217 Home Assistant sets the serial parameters on the server."
+        }
+      },
+      "rtu_over_tcp": {
+        "title": "Serial device server (raw TCP)",
+        "description": "Set the server to TCP server mode with 9600 baud, 8 data bits, no parity, 1 stop bit; Modbus RTU frames are passed through unchanged.",
+        "data": {
+          "host": "Host",
+          "port": "Port"
+        },
+        "data_description": {
+          "host": "IP address or host name of the serial device server."
+        }
+      },
+      "modbus_tcp": {
+        "title": "Modbus TCP gateway",
+        "description": "Set the gateway to convert Modbus TCP to Modbus RTU, with 9600 baud, 8 data bits, no parity, 1 stop bit on the serial side.",
+        "data": {
+          "host": "Host",
+          "port": "Port"
+        },
+        "data_description": {
+          "host": "IP address or host name of the gateway."
+        }
+      },
+      "thermostats": {
+        "title": "Thermostats",
+        "description": "Enter the Modbus address of every thermostat on this bus. The address is set on the thermostat: with it switched off, hold M and the clock key for 5 seconds, then press M until option C is shown. The default is 1.",
+        "data": {
+          "addresses": "Addresses",
+          "skip_check": "Add without checking that they respond"
+        },
+        "data_description": {
+          "addresses": "Separate with commas; ranges are allowed, e.g. 1, 2, 5-8.",
+          "skip_check": "Use this when some thermostats are not powered yet."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the bus. Check the port or host and port.",
+      "no_response": "No answer from thermostat(s) {missing}. Check the addresses, wiring (A/B) and serial settings, or tick the option to add them anyway.",
+      "no_devices": "Connected, but none of the configured thermostats answered.",
+      "invalid_addresses": "Enter addresses between 1 and 255, e.g. 1, 2, 5-8."
+    },
+    "abort": {
+      "already_configured": "This bus is already configured.",
+      "reconfigure_successful": "The connection was updated."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Thermostat bus options",
+        "data": {
+          "addresses": "Thermostat addresses",
+          "scan_interval": "Polling interval",
+          "timeout": "Response timeout",
+          "message_delay": "Delay between messages",
+          "min_temp": "Minimum target temperature",
+          "max_temp": "Maximum target temperature",
+          "auto_sync_clock": "Keep thermostat clocks in sync"
+        },
+        "data_description": {
+          "addresses": "Separate with commas; ranges are allowed, e.g. 1, 2, 5-8.",
+          "timeout": "Increase when using a slow network serial server.",
+          "message_delay": "Pause between requests on the bus. Increase if thermostats miss requests.",
+          "auto_sync_clock": "Set the thermostat clock from Home Assistant whenever it is more than 2 minutes off. Needed for the timer and schedule modes."
+        }
+      }
+    },
+    "error": {
+      "invalid_addresses": "Enter addresses between 1 and 255, e.g. 1, 2, 5-8.",
+      "invalid_temp_range": "The maximum must be above the minimum."
+    }
+  },
+  "selector": {
+    "parity": {
+      "options": {
+        "N": "None",
+        "E": "Even",
+        "O": "Odd"
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "heating": { "name": "Heating" }
+    },
+    "button": {
+      "sync_clock": { "name": "Sync clock" }
+    },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "manual": "Manual",
+              "timer": "Timer",
+              "schedule": "Schedule"
+            }
+          }
+        }
+      }
+    },
+    "sensor": {
+      "device_clock": { "name": "Thermostat clock" }
+    },
+    "switch": {
+      "child_lock": { "name": "Child lock" }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "entity": {
+    "binary_sensor": {
+      "heating": { "default": "mdi:radiator-off", "state": { "on": "mdi:radiator" } }
+    },
+    "button": {
+      "sync_clock": { "default": "mdi:clock-check-outline" }
+    },
+    "sensor": {
+      "device_clock": { "default": "mdi:clock-outline" }
+    },
+    "switch": {
+      "child_lock": { "default": "mdi:lock-open-variant", "state": { "on": "mdi:lock" } }
+    }
+  }
+}

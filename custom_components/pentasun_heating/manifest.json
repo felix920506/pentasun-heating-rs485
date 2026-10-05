@@ -1,0 +1,13 @@
+{
+  "domain": "pentasun_heating",
+  "name": "Pentasun Floor Heating",
+  "codeowners": ["@felix920506"],
+  "config_flow": true,
+  "documentation": "https://github.com/felix920506/pentasun-heating-rs485",
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/felix920506/pentasun-heating-rs485/issues",
+  "loggers": ["custom_components.pentasun_heating"],
+  "requirements": ["pyserial>=3.5"],
+  "version": "0.1.0"
+}
