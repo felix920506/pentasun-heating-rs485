@@ -1,0 +1,85 @@
+"""A fake RS485 bus of PTB thermostats, served over TCP for the tests."""
+
+from __future__ import annotations
+
+import asyncio
+import struct
+
+from custom_components.pentasun_heating.modbus import build_rtu_frame, crc16
+
+WRITABLE = range(7)  # registers 40001-40007
+
+
+class ThermostatBus:
+    """Thermostats keyed by Modbus address, reachable via RTU-over-TCP or Modbus TCP."""
+
+    def __init__(self) -> None:
+        """Initialize the bus."""
+        self.units: dict[int, list[int]] = {}
+        self.requests: list[tuple[int, bytes]] = []
+        self.server: asyncio.Server | None = None
+        self.port = 0
+
+    def add(self, unit: int, regs: list[int] | None = None) -> list[int]:
+        """Add a thermostat: on, manual, 22.0 °C target, 21.5 °C room, heating."""
+        self.units[unit] = regs if regs is not None else [1, 0, 220, 0, 30, 12, 3, 215, 1]
+        return self.units[unit]
+
+    def handle(self, unit: int, pdu: bytes) -> bytes | None:
+        """Process a request PDU; None means the unit stays silent."""
+        self.requests.append((unit, pdu))
+        regs = self.units.get(unit)
+        if regs is None:
+            return None
+        function, address, value = struct.unpack(">BHH", pdu)
+        if function == 3:
+            if address + value > len(regs):
+                return bytes([0x83, 2])
+            data = regs[address : address + value]
+            return bytes([3, 2 * value]) + struct.pack(f">{value}H", *data)
+        if function == 6:
+            if address not in WRITABLE:
+                return bytes([0x86, 2])
+            regs[address] = value
+            return pdu
+        return bytes([function | 0x80, 1])
+
+    async def start(self, mode: str) -> int:
+        """Start serving; mode is "rtu" or "tcp". Returns the port."""
+        handler = self._serve_rtu if mode == "rtu" else self._serve_mbap
+        self.server = await asyncio.start_server(handler, "127.0.0.1", 0)
+        self.port = self.server.sockets[0].getsockname()[1]
+        return self.port
+
+    async def stop(self) -> None:
+        """Stop serving."""
+        if self.server:
+            self.server.close()
+            self.server.close_clients()
+            await self.server.wait_closed()
+
+    async def _serve_rtu(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        try:
+            while True:
+                frame = await reader.readexactly(8)  # fc 3 and 6 requests are 8 bytes
+                assert crc16(frame[:-2]) == struct.unpack("<H", frame[-2:])[0]
+                if (resp := self.handle(frame[0], frame[1:6])) is not None:
+                    writer.write(build_rtu_frame(frame[0], resp))
+                    await writer.drain()
+        except (asyncio.IncompleteReadError, ConnectionError):
+            writer.close()
+
+    async def _serve_mbap(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        try:
+            while True:
+                tid, _, length, unit = struct.unpack(">HHHB", await reader.readexactly(7))
+                pdu = await reader.readexactly(length - 1)
+                if (resp := self.handle(unit, pdu)) is not None:
+                    writer.write(struct.pack(">HHHB", tid, 0, len(resp) + 1, unit) + resp)
+                    await writer.drain()
+        except (asyncio.IncompleteReadError, ConnectionError):
+            writer.close()
