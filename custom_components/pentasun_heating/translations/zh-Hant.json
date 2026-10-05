@@ -1,0 +1,159 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "溫控器如何連接？",
+        "description": "選擇 Home Assistant 連接溫控器 RS485 匯流排的方式。",
+        "menu_options": {
+          "serial": "本機的 USB / RS485 轉換器",
+          "rfc2217": "串口伺服器（RFC 2217 / Telnet COM Port 模式）",
+          "rtu_over_tcp": "串口伺服器（原始 TCP Socket 模式）",
+          "modbus_tcp": "Modbus TCP 閘道（轉換為 Modbus RTU）"
+        }
+      },
+      "reconfigure": {
+        "title": "溫控器如何連接？",
+        "description": "選擇新的 RS485 匯流排連接方式。",
+        "menu_options": {
+          "serial": "本機的 USB / RS485 轉換器",
+          "rfc2217": "串口伺服器（RFC 2217 / Telnet COM Port 模式）",
+          "rtu_over_tcp": "串口伺服器（原始 TCP Socket 模式）",
+          "modbus_tcp": "Modbus TCP 閘道（轉換為 Modbus RTU）"
+        }
+      },
+      "serial": {
+        "title": "RS485 轉換器",
+        "data": {
+          "device": "序列埠",
+          "baudrate": "鮑率",
+          "parity": "同位檢查",
+          "stopbits": "停止位元"
+        },
+        "data_description": {
+          "device": "建議使用 /dev/serial/by-id/… 路徑，重開機後才不會改變。",
+          "baudrate": "溫控器預設為 9600 bps、8 資料位元、無同位檢查、1 停止位元。"
+        }
+      },
+      "rfc2217": {
+        "title": "串口伺服器（RFC 2217）",
+        "data": {
+          "host": "主機",
+          "port": "通訊埠",
+          "baudrate": "鮑率",
+          "parity": "同位檢查",
+          "stopbits": "停止位元"
+        },
+        "data_description": {
+          "host": "串口伺服器的 IP 位址或主機名稱。",
+          "baudrate": "使用 RFC 2217 時，Home Assistant 會自動設定伺服器的序列參數。"
+        }
+      },
+      "rtu_over_tcp": {
+        "title": "串口伺服器（原始 TCP）",
+        "description": "請將伺服器設為 TCP Server 模式，序列埠設定為 9600 bps、8 資料位元、無同位檢查、1 停止位元；Modbus RTU 封包會原封不動地轉送。",
+        "data": {
+          "host": "主機",
+          "port": "通訊埠"
+        },
+        "data_description": {
+          "host": "串口伺服器的 IP 位址或主機名稱。"
+        }
+      },
+      "modbus_tcp": {
+        "title": "Modbus TCP 閘道",
+        "description": "請將閘道設為 Modbus TCP 轉 Modbus RTU，序列端設定為 9600 bps、8 資料位元、無同位檢查、1 停止位元。",
+        "data": {
+          "host": "主機",
+          "port": "通訊埠"
+        },
+        "data_description": {
+          "host": "閘道的 IP 位址或主機名稱。"
+        }
+      },
+      "thermostats": {
+        "title": "溫控器",
+        "description": "輸入此匯流排上每台溫控器的 Modbus 位址。位址在溫控器上設定：關機狀態下同時按住 M 與時鐘鍵 5 秒進入進階選項，再按 M 直到 C 項。預設為 1。",
+        "data": {
+          "addresses": "位址",
+          "skip_check": "不檢查回應，直接新增"
+        },
+        "data_description": {
+          "addresses": "以逗號分隔，可使用範圍，例如 1, 2, 5-8。",
+          "skip_check": "若部分溫控器尚未通電，請勾選此項。"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "無法連接匯流排，請檢查序列埠或主機與通訊埠。",
+      "no_response": "溫控器 {missing} 沒有回應。請檢查位址、配線（A/B）與序列參數，或勾選選項直接新增。",
+      "no_devices": "已連線，但設定中的溫控器都沒有回應。",
+      "invalid_addresses": "請輸入 1 到 255 之間的位址，例如 1, 2, 5-8。"
+    },
+    "abort": {
+      "already_configured": "此匯流排已經設定過了。",
+      "reconfigure_successful": "連線設定已更新。"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "溫控器匯流排選項",
+        "data": {
+          "addresses": "溫控器位址",
+          "scan_interval": "輪詢間隔",
+          "timeout": "回應逾時",
+          "message_delay": "訊息間隔延遲",
+          "min_temp": "最低設定溫度",
+          "max_temp": "最高設定溫度",
+          "auto_sync_clock": "自動同步溫控器時鐘"
+        },
+        "data_description": {
+          "addresses": "以逗號分隔，可使用範圍，例如 1, 2, 5-8。",
+          "timeout": "使用較慢的網路串口伺服器時請調高。",
+          "message_delay": "匯流排上每個請求之間的間隔。若溫控器漏接請求請調高。",
+          "auto_sync_clock": "溫控器時鐘誤差超過 2 分鐘時，以 Home Assistant 的時間校正。定時與程式模式需要正確的時鐘。"
+        }
+      }
+    },
+    "error": {
+      "invalid_addresses": "請輸入 1 到 255 之間的位址，例如 1, 2, 5-8。",
+      "invalid_temp_range": "最高溫度必須大於最低溫度。"
+    }
+  },
+  "selector": {
+    "parity": {
+      "options": {
+        "N": "無",
+        "E": "偶同位",
+        "O": "奇同位"
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "heating": { "name": "加熱中" }
+    },
+    "button": {
+      "sync_clock": { "name": "同步時鐘" }
+    },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "manual": "手動",
+              "timer": "定時",
+              "schedule": "程式"
+            }
+          }
+        }
+      }
+    },
+    "sensor": {
+      "device_clock": { "name": "溫控器時鐘" }
+    },
+    "switch": {
+      "child_lock": { "name": "童鎖" }
+    }
+  }
+}
