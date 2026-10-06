@@ -72,7 +72,7 @@
       },
       "thermostats": {
         "title": "Thermostats",
-        "description": "Enter the Modbus address of every thermostat on this bus. The address is set on the thermostat: with it switched off, hold M and the clock key for 5 seconds, then press M until option C is shown. The default is 1.",
+        "description": "Enter the Modbus address of every thermostat on this bus. Other Modbus devices may share the bus as long as each device has its own address. The address is set on the thermostat: with it switched off, hold M and the clock key for 5 seconds, then press M until option C is shown. The default is 1.",
         "data": {
           "addresses": "Addresses",
           "skip_check": "Add without checking that they respond"
@@ -85,9 +85,12 @@
     },
     "error": {
       "cannot_connect": "Failed to connect to the bus. Check the port or host and port.",
-      "no_response": "No answer from thermostat(s) {missing}. Check the addresses, wiring (A/B) and serial settings, or tick the option to add them anyway.",
+      "no_response": "No answer from thermostat(s) {addresses}. Check the addresses, wiring (A/B) and serial settings, or tick the option to add them anyway.",
       "no_devices": "Connected, but none of the configured thermostats answered.",
-      "invalid_addresses": "Enter addresses between 1 and 255, e.g. 1, 2, 5-8."
+      "invalid_addresses": "Enter addresses between 1 and 255, e.g. 1, 2, 5-8.",
+      "not_thermostat": "The device(s) at {addresses} answered, but don't look like PTB thermostats. Another kind of device on this bus may use that address.",
+      "address_in_use": "Address(es) {addresses} are already used on this bus by {users}. Every device on a bus needs its own address.",
+      "link_conflict": "This port or host is already used by another integration with different serial settings: {error}"
     },
     "abort": {
       "already_configured": "This bus is already configured.",
@@ -109,15 +112,16 @@
         },
         "data_description": {
           "addresses": "Separate with commas; ranges are allowed, e.g. 1, 2, 5-8.",
-          "timeout": "Increase when using a slow network serial server.",
-          "message_delay": "Pause between requests on the bus. Increase if thermostats miss requests.",
+          "timeout": "Leave empty to keep Home Assistant's default. On a bus shared with other integrations this is a minimum for the whole connection. Supported from Home Assistant 2026.10.",
+          "message_delay": "Minimum pause between requests to the same thermostat. Does not slow down other devices on the bus.",
           "auto_sync_clock": "Set the thermostat clock from Home Assistant whenever it is more than 2 minutes off. Needed for the timer and schedule modes."
         }
       }
     },
     "error": {
       "invalid_addresses": "Enter addresses between 1 and 255, e.g. 1, 2, 5-8.",
-      "invalid_temp_range": "The maximum must be above the minimum."
+      "invalid_temp_range": "The maximum must be above the minimum.",
+      "address_in_use": "Address(es) {addresses} are already used on this bus by {users}. Every device on a bus needs its own address."
     }
   },
   "selector": {
@@ -131,10 +135,14 @@
   },
   "entity": {
     "binary_sensor": {
-      "heating": { "name": "Heating" }
+      "heating": {
+        "name": "Heating"
+      }
     },
     "button": {
-      "sync_clock": { "name": "Sync clock" }
+      "sync_clock": {
+        "name": "Sync clock"
+      }
     },
     "climate": {
       "thermostat": {
@@ -150,10 +158,25 @@
       }
     },
     "sensor": {
-      "device_clock": { "name": "Thermostat clock" }
+      "device_clock": {
+        "name": "Thermostat clock"
+      }
     },
     "switch": {
-      "child_lock": { "name": "Child lock" }
+      "child_lock": {
+        "name": "Child lock"
+      }
+    }
+  },
+  "exceptions": {
+    "link_conflict": {
+      "message": "The bus is already used by another integration with different serial settings. Use the same settings everywhere. {error}"
+    }
+  },
+  "issues": {
+    "yaml_hub_shared": {
+      "title": "Modbus YAML hub on the same bus as {title}",
+      "description": "The Modbus YAML hub(s) {hubs} open their own connection to the same port or host as {title}. Requests from both can collide on the RS485 bus and cause timeouts or wrong readings. Config-entry based integrations share one connection automatically; consider moving those devices to an integration set up from the UI, or using a separate bus or port."
     }
   }
 }

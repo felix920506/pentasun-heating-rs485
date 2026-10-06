@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
+import functools
+from unittest.mock import patch
 
+from modbus_connection.tmodbus import ModbusConnection
 import pytest
 
 from .simulator import ThermostatBus
@@ -31,3 +34,23 @@ async def mbap_bus() -> AsyncGenerator[ThermostatBus]:
     await bus.start("tcp")
     yield bus
     await bus.stop()
+
+
+@pytest.fixture(autouse=True)
+def fast_shared_connections() -> Generator[None]:
+    """Shorten the shared connection's 10 s timeout so silent units fail fast."""
+    with patch(
+        "homeassistant.components.modbus.connection.ModbusConnection",
+        functools.partial(ModbusConnection, timeout=0.3),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def no_serial_ports() -> Generator[None]:
+    """Don't scan the host's serial ports."""
+    with patch(
+        "custom_components.pentasun_heating.config_flow.usb.async_scan_serial_ports",
+        return_value=[],
+    ):
+        yield

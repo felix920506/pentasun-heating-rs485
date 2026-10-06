@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import logging
-import os
 from typing import Any
 
+from modbus_connection import ModbusError
 import voluptuous as vol
 
+from homeassistant.components import usb
+from homeassistant.components.modbus import async_get_temporary_unit
 from homeassistant.config_entries import (
     SOURCE_RECONFIGURE,
     ConfigFlow,
@@ -16,7 +18,8 @@ from homeassistant.config_entries import (
     OptionsFlowWithReload,
 )
 from homeassistant.const import CONF_DEVICE, CONF_HOST, CONF_PORT, CONF_SCAN_INTERVAL
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import selector
 
 from .const import (
@@ -45,13 +48,17 @@ from .const import (
     DEFAULT_PARITY,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_STOPBITS,
-    DEFAULT_TIMEOUT,
     DOMAIN,
     MAX_ADDRESS,
     MIN_ADDRESS,
 )
-from .coordinator import PentasunConfigEntry, async_read_thermostat, create_client
-from .modbus import ModbusConnectionError, ModbusError
+from .bus import (
+    async_get_bus_usage,
+    async_read_thermostat,
+    build_params,
+    looks_like_thermostat,
+)
+from .coordinator import PentasunConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,7 +66,6 @@ CONF_SKIP_CHECK = "skip_check"
 
 DEFAULT_OPTIONS: dict[str, Any] = {
     CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
-    CONF_TIMEOUT: DEFAULT_TIMEOUT,
     CONF_MESSAGE_DELAY: DEFAULT_MESSAGE_DELAY,
     CONF_MIN_TEMP: DEFAULT_MIN_TEMP,
     CONF_MAX_TEMP: DEFAULT_MAX_TEMP,
@@ -98,26 +104,19 @@ def format_addresses(addresses: list[int]) -> str:
     return ", ".join(str(address) for address in sorted(addresses))
 
 
-def _list_serial_ports() -> list[selector.SelectOptionDict]:
+async def _async_list_serial_ports(hass: HomeAssistant) -> list[selector.SelectOptionDict]:
     """List serial ports, preferring the stable /dev/serial/by-id paths."""
-    from serial.tools import list_ports  # noqa: PLC0415
-
-    by_id: dict[str, str] = {}
-    by_id_dir = "/dev/serial/by-id"
-    if os.path.isdir(by_id_dir):
-        for name in os.listdir(by_id_dir):
-            link = os.path.join(by_id_dir, name)
-            by_id[os.path.realpath(link)] = link
-
     options: list[selector.SelectOptionDict] = []
-    for port in sorted(list_ports.comports(), key=lambda p: p.device):
-        path = by_id.get(os.path.realpath(port.device), port.device)
-        details = ", ".join(
-            part
-            for part in (port.description, port.manufacturer, port.serial_number)
-            if part and part != "n/a"
+    for port in await usb.async_scan_serial_ports(hass):
+        path = await hass.async_add_executor_job(usb.get_serial_by_id, port.device)
+        label = usb.human_readable_device_name(
+            port.device,
+            port.serial_number,
+            port.manufacturer,
+            port.description,
+            getattr(port, "vid", None),
+            getattr(port, "pid", None),
         )
-        label = f"{port.device} - {details}" if details else port.device
         options.append(selector.SelectOptionDict(value=path, label=label))
     return options
 
@@ -192,28 +191,71 @@ def _title(data: Mapping[str, Any]) -> str:
     return f"Pentasun ({_unique_id(data)})"
 
 
-async def _async_probe(
-    data: Mapping[str, Any], options: Mapping[str, Any], addresses: list[int]
-) -> tuple[str | None, list[int]]:
-    """Try to read every address.
+PROBE_PLACEHOLDERS = ("addresses", "users", "error")
 
-    Returns an error key (or None) and the list of addresses that did not answer.
+
+async def _async_probe(
+    hass: HomeAssistant,
+    data: Mapping[str, Any],
+    addresses: list[int],
+    exclude_entry_id: str | None = None,
+    *,
+    read: bool = True,
+) -> tuple[str | None, dict[str, str]]:
+    """Check the addresses on the bus; return an error key and placeholders.
+
+    Requests go over the modbus integration's shared connection, so probing
+    a bus other integrations already use doesn't disturb them. No timing
+    settings are changed on these temporary units: those apply to the whole
+    shared link and would outlive the flow.
     """
-    client = create_client(data, options)
+    placeholders = dict.fromkeys(PROBE_PLACEHOLDERS, "")
+    params = build_params(data)
+
+    # Another integration already talks to a device at one of these addresses.
+    usage = async_get_bus_usage(hass, params, exclude_entry_id)
+    users: dict[int, str] = {}
+    for entry_id, units in usage.entry_units.items():
+        other = hass.config_entries.async_get_entry(entry_id)
+        name = f"{other.title} ({other.domain})" if other else entry_id
+        users.update((unit, name) for unit in units)
+    for hub, units in usage.yaml_hubs.items():
+        users.update((unit, f"Modbus YAML hub {hub}") for unit in units or ())
+    if taken := [address for address in addresses if address in users]:
+        placeholders["addresses"] = format_addresses(taken)
+        placeholders["users"] = ", ".join(sorted({users[a] for a in taken}))
+        return "address_in_use", placeholders
+    if not read:
+        return None, placeholders
+
     missing: list[int] = []
-    try:
-        for address in addresses:
-            try:
-                await async_read_thermostat(client, address)
-            except ModbusConnectionError as err:
-                _LOGGER.debug("Connection failed: %s", err)
-                return "cannot_connect", addresses
-            except ModbusError as err:
-                _LOGGER.debug("Thermostat %s did not respond: %s", address, err)
-                missing.append(address)
-    finally:
-        await client.close()
-    return ("no_response" if missing else None), missing
+    foreign: list[int] = []
+    for address in addresses:
+        try:
+            async with async_get_temporary_unit(hass, params, address) as unit:
+                try:
+                    regs = await async_read_thermostat(unit)
+                except ModbusError as err:
+                    _LOGGER.debug("Thermostat %s: %s", address, err)
+                    if not unit.connected:
+                        return "cannot_connect", placeholders
+                    missing.append(address)
+                    continue
+        except HomeAssistantError as err:
+            # The port or host is in use with different serial settings.
+            placeholders["error"] = str(err)
+            return "link_conflict", placeholders
+        if not looks_like_thermostat(regs):
+            _LOGGER.debug("Address %s does not look like a thermostat: %s", address, regs)
+            foreign.append(address)
+
+    if missing:
+        placeholders["addresses"] = format_addresses(missing)
+        return "no_response", placeholders
+    if foreign:
+        placeholders["addresses"] = format_addresses(foreign)
+        return "not_thermostat", placeholders
+    return None, placeholders
 
 
 class PentasunConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -278,7 +320,7 @@ class PentasunConfigFlow(ConfigFlow, domain=DOMAIN):
     async def _async_connection_schema(self, conn: str) -> vol.Schema:
         defaults = self._defaults(conn)
         if conn == CONN_SERIAL:
-            ports = await self.hass.async_add_executor_job(_list_serial_ports)
+            ports = await _async_list_serial_ports(self.hass)
             default_port = ports[0]["value"] if ports else vol.UNDEFINED
             schema = {
                 vol.Required(
@@ -304,6 +346,7 @@ class PentasunConfigFlow(ConfigFlow, domain=DOMAIN):
         self, conn: str, user_input: dict[str, Any] | None
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
+        placeholders = dict.fromkeys(PROBE_PLACEHOLDERS, "")
         if user_input is not None:
             self._data = _normalize(conn, user_input)
             await self.async_set_unique_id(_unique_id(self._data))
@@ -315,41 +358,50 @@ class PentasunConfigFlow(ConfigFlow, domain=DOMAIN):
             if self.unique_id != entry.unique_id:
                 self._abort_if_unique_id_configured()
             addresses = entry.options[CONF_ADDRESSES]
-            error, missing = await _async_probe(self._data, entry.options, addresses)
+            error, placeholders = await _async_probe(
+                self.hass, self._data, addresses, entry.entry_id
+            )
             # Accept the new connection as long as any thermostat answers.
-            if error == "cannot_connect" or len(missing) == len(addresses):
-                errors["base"] = "cannot_connect" if error == "cannot_connect" else "no_devices"
-            else:
+            if error == "no_response":
+                all_missing = placeholders["addresses"] == format_addresses(addresses)
+                error = "no_devices" if all_missing else None
+            if not error:
                 return self.async_update_reload_and_abort(
                     entry,
                     unique_id=self.unique_id,
                     title=_title(self._data),
                     data=self._data,
                 )
+            errors["base"] = error
 
         schema = await self._async_connection_schema(conn)
         if user_input is not None:
             schema = self.add_suggested_values_to_schema(schema, user_input)
-        return self.async_show_form(step_id=conn, data_schema=schema, errors=errors)
+        return self.async_show_form(
+            step_id=conn,
+            data_schema=schema,
+            errors=errors,
+            description_placeholders=placeholders,
+        )
 
     async def async_step_thermostats(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Enter the Modbus addresses of the thermostats on the bus."""
         errors: dict[str, str] = {}
-        placeholders: dict[str, str] = {"missing": ""}
+        placeholders = dict.fromkeys(PROBE_PLACEHOLDERS, "")
         if user_input is not None:
             try:
                 addresses = parse_addresses(user_input[CONF_ADDRESSES])
             except InvalidAddresses:
                 errors[CONF_ADDRESSES] = "invalid_addresses"
             else:
-                error = None
-                if not user_input.get(CONF_SKIP_CHECK):
-                    error, missing = await _async_probe(
-                        self._data, DEFAULT_OPTIONS, addresses
-                    )
-                    placeholders["missing"] = format_addresses(missing)
+                error, placeholders = await _async_probe(
+                    self.hass,
+                    self._data,
+                    addresses,
+                    read=not user_input.get(CONF_SKIP_CHECK),
+                )
                 if error:
                     errors["base"] = error
                 else:
@@ -381,14 +433,21 @@ class PentasunOptionsFlow(OptionsFlowWithReload):
     ) -> ConfigFlowResult:
         """Manage the options."""
         errors: dict[str, str] = {}
-        options = self.config_entry.options
+        placeholders = dict.fromkeys(PROBE_PLACEHOLDERS, "")
+        entry = self.config_entry
+        options = entry.options
         if user_input is not None:
             try:
                 addresses = parse_addresses(user_input[CONF_ADDRESSES])
             except InvalidAddresses:
                 errors[CONF_ADDRESSES] = "invalid_addresses"
             else:
-                if user_input[CONF_MIN_TEMP] >= user_input[CONF_MAX_TEMP]:
+                error, placeholders = await _async_probe(
+                    self.hass, entry.data, addresses, entry.entry_id, read=False
+                )
+                if error:
+                    errors[CONF_ADDRESSES] = error
+                elif user_input[CONF_MIN_TEMP] >= user_input[CONF_MAX_TEMP]:
                     errors[CONF_MAX_TEMP] = "invalid_temp_range"
                 else:
                     return self.async_create_entry(
@@ -417,7 +476,7 @@ class PentasunOptionsFlow(OptionsFlowWithReload):
             {
                 vol.Required(CONF_ADDRESSES): str,
                 vol.Required(CONF_SCAN_INTERVAL): number(5, 3600, 1, "s"),
-                vol.Required(CONF_TIMEOUT): number(0.2, 10, 0.1, "s"),
+                vol.Optional(CONF_TIMEOUT): number(0.2, 30, 0.1, "s"),
                 vol.Required(CONF_MESSAGE_DELAY): number(0, 1000, 10, "ms"),
                 vol.Required(CONF_MIN_TEMP): number(0, 40, 0.5, "°C"),
                 vol.Required(CONF_MAX_TEMP): number(5, 60, 0.5, "°C"),
@@ -435,4 +494,5 @@ class PentasunOptionsFlow(OptionsFlowWithReload):
                 schema, user_input or suggested
             ),
             errors=errors,
+            description_placeholders=placeholders,
         )

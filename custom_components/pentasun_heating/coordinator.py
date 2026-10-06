@@ -2,41 +2,30 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 import logging
 from typing import Any
 
+from modbus_connection import ModbusError, ModbusUnit
+
+from homeassistant.components.modbus import async_get_unit
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_DEVICE, CONF_HOST, CONF_PORT, CONF_SCAN_INTERVAL
+from homeassistant.const import CONF_SCAN_INTERVAL
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
+from .bus import async_read_thermostat, build_params, configure_unit
 from .const import (
     CLOCK_DRIFT_TOLERANCE,
     CONF_ADDRESSES,
     CONF_AUTO_SYNC_CLOCK,
-    CONF_BAUDRATE,
-    CONF_CONNECTION_TYPE,
-    CONF_MESSAGE_DELAY,
-    CONF_PARITY,
-    CONF_STOPBITS,
-    CONF_TIMEOUT,
-    CONN_MODBUS_TCP,
-    CONN_RFC2217,
-    CONN_RTU_OVER_TCP,
-    CONN_SERIAL,
     DEFAULT_AUTO_SYNC_CLOCK,
-    DEFAULT_BAUDRATE,
-    DEFAULT_MESSAGE_DELAY,
-    DEFAULT_PARITY,
     DEFAULT_SCAN_INTERVAL,
-    DEFAULT_STOPBITS,
-    DEFAULT_TIMEOUT,
     DOMAIN,
+    MAX_MISSED_POLLS,
     REG_HEATING,
     REG_HOUR,
     REG_LOCK,
@@ -46,17 +35,7 @@ from .const import (
     REG_ROOM_TEMP,
     REG_SETPOINT,
     REG_WEEKDAY,
-    REGISTER_COUNT,
-)
-from .modbus import (
-    ModbusClient,
-    ModbusConnectionError,
-    ModbusError,
-    ModbusExceptionResponse,
-    ModbusTcpTransport,
-    SerialRtuTransport,
-    TcpRtuTransport,
-    Transport,
+    UNAVAILABLE_RETRY_INTERVAL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -109,57 +88,24 @@ class ThermostatState:
         return ((self.weekday - 1) * 24 + self.hour) * 60 + self.minute
 
 
-def create_transport(data: Mapping[str, Any]) -> Transport:
-    """Create the transport described by config entry data."""
-    conn = data[CONF_CONNECTION_TYPE]
-    serial_settings = {
-        "baudrate": data.get(CONF_BAUDRATE, DEFAULT_BAUDRATE),
-        "parity": data.get(CONF_PARITY, DEFAULT_PARITY),
-        "stopbits": data.get(CONF_STOPBITS, DEFAULT_STOPBITS),
-    }
-    if conn == CONN_SERIAL:
-        return SerialRtuTransport(data[CONF_DEVICE], **serial_settings)
-    if conn == CONN_RFC2217:
-        return SerialRtuTransport(
-            f"rfc2217://{data[CONF_HOST]}:{data[CONF_PORT]}", **serial_settings
-        )
-    if conn == CONN_RTU_OVER_TCP:
-        return TcpRtuTransport(data[CONF_HOST], data[CONF_PORT])
-    if conn == CONN_MODBUS_TCP:
-        return ModbusTcpTransport(data[CONF_HOST], data[CONF_PORT])
-    raise ValueError(f"Unknown connection type {conn}")
-
-
-def create_client(data: Mapping[str, Any], options: Mapping[str, Any]) -> ModbusClient:
-    """Create a Modbus client from config entry data and options."""
-    return ModbusClient(
-        create_transport(data),
-        timeout=options.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
-        message_delay=options.get(CONF_MESSAGE_DELAY, DEFAULT_MESSAGE_DELAY) / 1000,
-    )
-
-
-async def async_read_thermostat(client: ModbusClient, address: int) -> list[int]:
-    """Read the register block, falling back for firmware without register 9."""
-    try:
-        return await client.read_holding_registers(address, 0, REGISTER_COUNT)
-    except ModbusExceptionResponse as err:
-        if err.code != 2:  # 2 = illegal data address
-            raise
-        return await client.read_holding_registers(address, 0, REGISTER_COUNT - 1)
-
-
 class PentasunCoordinator(DataUpdateCoordinator[dict[int, ThermostatState]]):
     """Polls every thermostat on the bus.
 
-    ``data`` maps a Modbus address to its state; addresses that did not answer
-    during the last poll are absent, which makes only that device unavailable.
+    ``data`` maps a Modbus address to its state. A thermostat that misses
+    ``MAX_MISSED_POLLS`` polls in a row is left out, which makes only that
+    device unavailable. Every request to a silent unit holds up the whole
+    shared bus until it times out, so an unavailable thermostat is only
+    retried every ``UNAVAILABLE_RETRY_INTERVAL``.
     """
 
     config_entry: PentasunConfigEntry
 
     def __init__(self, hass: HomeAssistant, entry: PentasunConfigEntry) -> None:
-        """Initialize the coordinator."""
+        """Initialize the coordinator.
+
+        Raises ``HomeAssistantError`` when another integration already uses the
+        same port or host with different link settings.
+        """
         super().__init__(
             hass,
             _LOGGER,
@@ -170,33 +116,51 @@ class PentasunCoordinator(DataUpdateCoordinator[dict[int, ThermostatState]]):
             ),
             always_update=False,
         )
-        self.client = create_client(entry.data, entry.options)
+        params = build_params(entry.data)
         self.addresses: list[int] = sorted(entry.options[CONF_ADDRESSES])
+        # The modbus integration shares one connection per port or host between
+        # all config entries and closes it when the last one unloads.
+        self.units: dict[int, ModbusUnit] = {}
+        for address in self.addresses:
+            unit = self.units[address] = async_get_unit(hass, entry, params, address)
+            # Our timing requests stay on the shared link after we unload
+            # unless withdrawn.
+            entry.async_on_unload(configure_unit(unit, entry.options))
         self._auto_sync_clock: bool = entry.options.get(
             CONF_AUTO_SYNC_CLOCK, DEFAULT_AUTO_SYNC_CLOCK
         )
+        self._missed: dict[int, int] = {}
+        self._next_retry: dict[int, datetime] = {}
         self._last_clock_sync: dict[int, datetime] = {}
 
-    async def async_shutdown(self) -> None:
-        """Close the bus connection."""
-        await super().async_shutdown()
-        await self.client.close()
-
     async def _async_update_data(self) -> dict[int, ThermostatState]:
+        previous = self.data or {}
         data: dict[int, ThermostatState] = {}
         last_error: ModbusError | None = None
-        for address in self.addresses:
-            try:
-                regs = await async_read_thermostat(self.client, address)
-            except ModbusConnectionError as err:
-                # The whole bus is unreachable; don't wait for every address.
-                raise UpdateFailed(f"Cannot reach the RS485 bus: {err}") from err
-            except ModbusError as err:
-                last_error = err
-                if self.data is None or address in self.data:
-                    _LOGGER.warning("Thermostat %s did not respond: %s", address, err)
+        now = dt_util.utcnow()
+        for address, unit in self.units.items():
+            if (retry_at := self._next_retry.get(address)) and now < retry_at:
                 continue
-            if self.data is not None and address not in self.data:
+            try:
+                regs = await async_read_thermostat(unit)
+            except ModbusError as err:
+                if not unit.connected:
+                    # The link itself is down; don't wait for every address.
+                    raise UpdateFailed(f"Cannot reach the RS485 bus: {err}") from err
+                last_error = err
+                missed = self._missed[address] = self._missed.get(address, 0) + 1
+                if missed < MAX_MISSED_POLLS and address in previous:
+                    data[address] = previous[address]
+                    continue
+                if missed == MAX_MISSED_POLLS or address not in previous:
+                    _LOGGER.warning(
+                        "Thermostat %s did not respond, retrying every %s: %s",
+                        address, UNAVAILABLE_RETRY_INTERVAL, err,
+                    )
+                self._next_retry[address] = now + UNAVAILABLE_RETRY_INTERVAL
+                continue
+            self._next_retry.pop(address, None)
+            if self._missed.pop(address, 0) >= MAX_MISSED_POLLS:
                 _LOGGER.info("Thermostat %s is responding again", address)
             data[address] = state = ThermostatState.from_registers(regs)
             if self._auto_sync_clock:
@@ -229,10 +193,11 @@ class PentasunCoordinator(DataUpdateCoordinator[dict[int, ThermostatState]]):
     async def _async_write_clock(
         self, address: int, state: ThermostatState, now: datetime
     ) -> ThermostatState:
+        unit = self.units[address]
         weekday = now.isoweekday()
-        await self.client.write_register(address, REG_WEEKDAY, weekday)
-        await self.client.write_register(address, REG_HOUR, now.hour)
-        await self.client.write_register(address, REG_MINUTE, now.minute)
+        await unit.write_register(REG_WEEKDAY, weekday)
+        await unit.write_register(REG_HOUR, now.hour)
+        await unit.write_register(REG_MINUTE, now.minute)
         return replace(state, weekday=weekday, hour=now.hour, minute=now.minute)
 
     async def async_sync_clock(self, address: int) -> None:
@@ -251,7 +216,7 @@ class PentasunCoordinator(DataUpdateCoordinator[dict[int, ThermostatState]]):
         """Write one register and update the cached state with ``changes``."""
         state = self._require_state(address)
         try:
-            await self.client.write_register(address, register, value)
+            await self.units[address].write_register(register, value & 0xFFFF)
         except ModbusError as err:
             raise HomeAssistantError(
                 f"Failed to write to thermostat {address}: {err}"

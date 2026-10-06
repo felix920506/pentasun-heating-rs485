@@ -1,3 +1,4 @@
+# Home Assistant 2026.9+ needs Python 3.14; the modbus libraries come with it
 pytest-homeassistant-custom-component
 pytest-timeout
-pyserial>=3.5
+aiousbwatcher

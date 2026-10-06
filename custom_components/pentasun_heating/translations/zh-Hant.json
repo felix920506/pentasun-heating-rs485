@@ -72,7 +72,7 @@
       },
       "thermostats": {
         "title": "溫控器",
-        "description": "輸入此匯流排上每台溫控器的 Modbus 位址。位址在溫控器上設定：關機狀態下同時按住 M 與時鐘鍵 5 秒進入進階選項，再按 M 直到 C 項。預設為 1。",
+        "description": "輸入此匯流排上每台溫控器的 Modbus 位址。只要每台裝置位址不同，匯流排上也可以有其他 Modbus 裝置。位址在溫控器上設定：關機狀態下同時按住 M 與時鐘鍵 5 秒進入進階選項，再按 M 直到 C 項。預設為 1。",
         "data": {
           "addresses": "位址",
           "skip_check": "不檢查回應，直接新增"
@@ -85,9 +85,12 @@
     },
     "error": {
       "cannot_connect": "無法連接匯流排，請檢查序列埠或主機與通訊埠。",
-      "no_response": "溫控器 {missing} 沒有回應。請檢查位址、配線（A/B）與序列參數，或勾選選項直接新增。",
+      "no_response": "溫控器 {addresses} 沒有回應。請檢查位址、配線（A/B）與序列參數，或勾選選項直接新增。",
       "no_devices": "已連線，但設定中的溫控器都沒有回應。",
-      "invalid_addresses": "請輸入 1 到 255 之間的位址，例如 1, 2, 5-8。"
+      "invalid_addresses": "請輸入 1 到 255 之間的位址，例如 1, 2, 5-8。",
+      "not_thermostat": "位址 {addresses} 的裝置有回應，但看起來不是 PTB 溫控器。可能是此匯流排上的其他裝置使用了該位址。",
+      "address_in_use": "位址 {addresses} 在此匯流排上已被 {users} 使用。匯流排上的每台裝置都需要獨立的位址。",
+      "link_conflict": "此序列埠或主機已被其他整合以不同的序列參數使用：{error}"
     },
     "abort": {
       "already_configured": "此匯流排已經設定過了。",
@@ -109,15 +112,16 @@
         },
         "data_description": {
           "addresses": "以逗號分隔，可使用範圍，例如 1, 2, 5-8。",
-          "timeout": "使用較慢的網路串口伺服器時請調高。",
-          "message_delay": "匯流排上每個請求之間的間隔。若溫控器漏接請求請調高。",
+          "timeout": "留空則使用 Home Assistant 預設值。與其他整合共用匯流排時，此值為整條連線的最低逾時。需 Home Assistant 2026.10 以上。",
+          "message_delay": "對同一台溫控器連續請求之間的最短間隔，不會拖慢匯流排上的其他裝置。",
           "auto_sync_clock": "溫控器時鐘誤差超過 2 分鐘時，以 Home Assistant 的時間校正。定時與程式模式需要正確的時鐘。"
         }
       }
     },
     "error": {
       "invalid_addresses": "請輸入 1 到 255 之間的位址，例如 1, 2, 5-8。",
-      "invalid_temp_range": "最高溫度必須大於最低溫度。"
+      "invalid_temp_range": "最高溫度必須大於最低溫度。",
+      "address_in_use": "位址 {addresses} 在此匯流排上已被 {users} 使用。匯流排上的每台裝置都需要獨立的位址。"
     }
   },
   "selector": {
@@ -131,10 +135,14 @@
   },
   "entity": {
     "binary_sensor": {
-      "heating": { "name": "加熱中" }
+      "heating": {
+        "name": "加熱中"
+      }
     },
     "button": {
-      "sync_clock": { "name": "同步時鐘" }
+      "sync_clock": {
+        "name": "同步時鐘"
+      }
     },
     "climate": {
       "thermostat": {
@@ -150,10 +158,25 @@
       }
     },
     "sensor": {
-      "device_clock": { "name": "溫控器時鐘" }
+      "device_clock": {
+        "name": "溫控器時鐘"
+      }
     },
     "switch": {
-      "child_lock": { "name": "童鎖" }
+      "child_lock": {
+        "name": "童鎖"
+      }
+    }
+  },
+  "exceptions": {
+    "link_conflict": {
+      "message": "此匯流排已被其他整合以不同的序列參數使用，請在各處使用相同的設定。{error}"
+    }
+  },
+  "issues": {
+    "yaml_hub_shared": {
+      "title": "Modbus YAML 集線器與 {title} 位於同一匯流排",
+      "description": "Modbus YAML 集線器 {hubs} 會自行開啟與 {title} 相同序列埠或主機的連線。兩者的請求可能在 RS485 匯流排上衝突，造成逾時或讀值錯誤。透過 UI 設定的整合會自動共用同一條連線；建議將這些裝置改用 UI 設定的整合，或使用另一條匯流排或序列埠。"
     }
   }
 }

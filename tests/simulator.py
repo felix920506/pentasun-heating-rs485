@@ -1,11 +1,26 @@
-"""A fake RS485 bus of PTB thermostats, served over TCP for the tests."""
+"""A fake RS485 bus of PTB thermostats (and other devices), served over TCP."""
 
 from __future__ import annotations
 
 import asyncio
 import struct
 
-from custom_components.pentasun_heating.modbus import build_rtu_frame, crc16
+
+
+def crc16(data: bytes) -> int:
+    """Return the Modbus CRC-16 of ``data``."""
+    crc = 0xFFFF
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+    return crc
+
+
+def build_rtu_frame(unit: int, pdu: bytes) -> bytes:
+    """Wrap a PDU into an RTU frame."""
+    body = bytes([unit]) + pdu
+    return body + struct.pack("<H", crc16(body))
 
 WRITABLE = range(7)  # registers 40001-40007
 
@@ -19,6 +34,7 @@ class ThermostatBus:
         self.requests: list[tuple[int, bytes]] = []
         self.server: asyncio.Server | None = None
         self.port = 0
+        self.connections = 0  # currently open client connections
 
     def add(self, unit: int, regs: list[int] | None = None) -> list[int]:
         """Add a thermostat: on, manual, 22.0 °C target, 21.5 °C room, heating."""
@@ -61,6 +77,7 @@ class ThermostatBus:
     async def _serve_rtu(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
+        self.connections += 1
         try:
             while True:
                 frame = await reader.readexactly(8)  # fc 3 and 6 requests are 8 bytes
@@ -70,10 +87,13 @@ class ThermostatBus:
                     await writer.drain()
         except (asyncio.IncompleteReadError, ConnectionError):
             writer.close()
+        finally:
+            self.connections -= 1
 
     async def _serve_mbap(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
+        self.connections += 1
         try:
             while True:
                 tid, _, length, unit = struct.unpack(">HHHB", await reader.readexactly(7))
@@ -83,3 +103,5 @@ class ThermostatBus:
                     await writer.drain()
         except (asyncio.IncompleteReadError, ConnectionError):
             writer.close()
+        finally:
+            self.connections -= 1

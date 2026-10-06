@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Final
 
 DOMAIN: Final = "pentasun_heating"
@@ -35,7 +36,6 @@ CONF_MAX_TEMP: Final = "max_temp"
 CONF_AUTO_SYNC_CLOCK: Final = "auto_sync_clock"
 
 DEFAULT_SCAN_INTERVAL: Final = 30
-DEFAULT_TIMEOUT: Final = 1.0
 DEFAULT_MESSAGE_DELAY: Final = 50  # milliseconds
 DEFAULT_MIN_TEMP: Final = 5.0
 DEFAULT_MAX_TEMP: Final = 35.0
@@ -63,3 +63,8 @@ MODES: Final = [MODE_MANUAL, MODE_TIMER, MODE_SCHEDULE]  # index = register valu
 
 # Re-sync the thermostat clock when it drifts by more than this many minutes
 CLOCK_DRIFT_TOLERANCE: Final = 2
+
+# A thermostat is shown unavailable after this many missed polls in a row
+MAX_MISSED_POLLS: Final = 2
+# ...and then only polled this often, so it doesn't stall the shared bus
+UNAVAILABLE_RETRY_INTERVAL: Final = timedelta(minutes=5)
