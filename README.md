@@ -99,9 +99,14 @@ device.
 * **Thermostats answer only some of the time:** this is normal for these thermostats.
   They ignore roughly 30–70 % of requests, with clean replies to the rest. This was
   measured on a single thermostat both on an unbiased bus and on a properly biased one
-  behind a serial device server, and it doesn't depend on timing or request size. The
-  integration repeats each request up to 8 times with a 1 s timeout. A thermostat
-  answers in about 25–50 ms, so this costs little.
+  behind a serial device server, and it doesn't depend on timing or request size.
+  Misses are mostly independent, with occasional silent stretches of up to ~8 s.
+  The integration sends each request in up to 3 bursts of 4 tries (1 s timeout),
+  pausing 2 s and then 5 s between bursts so the tries are spread over time; the bus
+  stays free for other devices during the pauses. In a 150-read test on hardware
+  every read succeeded: most at once (median 0.05 s), the slowest after 11 tries
+  (17 s). A thermostat that really is gone costs at most 12 s of bus time, and is
+  then only retried every 5 minutes.
 * **Bus wiring:** RS485 still needs fail-safe bias for reliable communication. If A–B
   measures about 0 V with the bus idle, enable the bias (and 120 Ω termination)
   jumpers on your USB adapter or serial server. Otherwise add about 680 Ω from A to

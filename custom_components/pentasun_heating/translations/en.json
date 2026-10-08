@@ -112,7 +112,7 @@
         },
         "data_description": {
           "addresses": "Separate with commas; ranges are allowed, e.g. 1, 2, 5-8.",
-          "timeout": "How long to wait for a thermostat to answer before asking again (up to 8 tries). On a bus shared with other integrations this is a minimum for the whole connection. Applied from Home Assistant 2026.10.",
+          "timeout": "How long to wait for a thermostat to answer before asking again (up to 12 tries, spread over about 20 s). On a bus shared with other integrations this is a minimum for the whole connection. Applied from Home Assistant 2026.10.",
           "message_delay": "Minimum pause between requests to the same thermostat. Does not slow down other devices on the bus.",
           "auto_sync_clock": "Set the thermostat clock from Home Assistant whenever it is more than 2 minutes off. Needed for the timer and schedule modes."
         }

@@ -391,6 +391,27 @@ async def test_lost_requests_are_repeated(hass: HomeAssistant, rtu_bus: Thermost
     )
     assert regs[2] == 190
 
+    # A silent stretch longer than one burst of tries is waited out
+    rtu_bus.drop_next = 9
+    requests = len(rtu_bus.requests)
+    await hass.services.async_call(
+        CLIMATE_DOMAIN, SERVICE_SET_TEMPERATURE,
+        {ATTR_ENTITY_ID: CLIMATE_1, ATTR_TEMPERATURE: 20}, blocking=True,
+    )
+    assert regs[2] == 200
+    assert len(rtu_bus.requests) - requests == 9 + 2  # dropped, then write + read-back
+
+    # ...but a thermostat that never answers gives up after 3 bursts of 4
+    rtu_bus.drop_next = 100
+    requests = len(rtu_bus.requests)
+    with pytest.raises(HomeAssistantError) as err:
+        await hass.services.async_call(
+            CLIMATE_DOMAIN, SERVICE_SET_TEMPERATURE,
+            {ATTR_ENTITY_ID: CLIMATE_1, ATTR_TEMPERATURE: 21}, blocking=True,
+        )
+    assert err.value.translation_key == "write_failed"
+    assert len(rtu_bus.requests) - requests == 12
+
 
 async def test_writes_are_verified(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
     """A write that doesn't stick is repeated; one the thermostat refuses is reported."""

@@ -8,6 +8,7 @@ serialized on one link instead of colliding on the wire.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 import logging
@@ -48,7 +49,8 @@ from .const import (
     REG_POWER,
     REG_WEEKDAY,
     REGISTER_COUNT,
-    REQUEST_ATTEMPTS,
+    REQUEST_ATTEMPTS_PER_BURST,
+    REQUEST_BURST_PAUSES,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -121,17 +123,27 @@ def require_timeout(unit: ModbusUnit, timeout: float) -> Callable[[], None]:
 
 
 async def _async_request[T](unit: ModbusUnit, request: Callable[[], Awaitable[T]]) -> T:
-    """Send a request, repeating it when the answer is lost or garbled."""
-    attempt = 1
-    while True:
-        try:
-            return await request()
-        except (ModbusTimeoutError, ModbusProtocolError) as err:
-            # A link that is down won't come back by asking again.
-            if attempt >= REQUEST_ATTEMPTS or not unit.connected:
-                raise
-            _LOGGER.debug("Attempt %s/%s failed: %s", attempt, REQUEST_ATTEMPTS, err)
-            attempt += 1
+    """Send a request, repeating it when the answer is lost or garbled.
+
+    Tries come in bursts separated by pauses, so a thermostat that is silent
+    for a few seconds gets asked again once it listens. The bus is free for
+    other devices during the pauses.
+    """
+    bursts = len(REQUEST_BURST_PAUSES) + 1
+    for burst, pause in enumerate((0.0, *REQUEST_BURST_PAUSES), start=1):
+        if pause:
+            _LOGGER.debug("No answer, trying again in %s s (burst %s/%s)", pause, burst, bursts)
+            await asyncio.sleep(pause)
+        for attempt in range(1, REQUEST_ATTEMPTS_PER_BURST + 1):
+            try:
+                return await request()
+            except (ModbusTimeoutError, ModbusProtocolError) as err:
+                # A link that is down won't come back by asking again.
+                last_try = burst == bursts and attempt == REQUEST_ATTEMPTS_PER_BURST
+                if last_try or not unit.connected:
+                    raise
+                _LOGGER.debug("Attempt %s of burst %s failed: %s", attempt, burst, err)
+    raise AssertionError("unreachable")
 
 
 async def async_read_thermostat(unit: ModbusUnit) -> list[int]:

@@ -74,10 +74,13 @@ CLOCK_DRIFT_TOLERANCE: Final = 2
 MAX_MISSED_POLLS: Final = 2
 # ...and then only polled this often, so it doesn't stall the shared bus
 UNAVAILABLE_RETRY_INTERVAL: Final = timedelta(minutes=5)
-# Requests are sent this many times before giving up. The thermostats ignore
-# a large share of requests regardless of wiring (measured 30-70 %, on biased
-# and unbiased buses alike); 8 tries keep failures below 1 %.
-REQUEST_ATTEMPTS: Final = 8
+# The thermostats ignore about half of all requests regardless of wiring
+# (measured 30-70 % on biased and unbiased buses; misses are mostly independent,
+# with silent stretches of up to ~8 s). A request is sent in bursts of quick
+# tries with pauses in between, so the tries are spread over time: 3 bursts of
+# 4 fail about once in 4000 requests. Pauses don't hold the shared bus.
+REQUEST_ATTEMPTS_PER_BURST: Final = 4
+REQUEST_BURST_PAUSES: Final = (2.0, 5.0)  # seconds before the 2nd and 3rd burst
 # A write the thermostat acknowledged but didn't keep is repeated this often
 WRITE_VERIFY_ATTEMPTS: Final = 3
 
