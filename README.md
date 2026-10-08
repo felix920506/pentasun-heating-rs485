@@ -42,7 +42,7 @@ In the setup dialog enter the addresses as a list, e.g. `1, 2, 5-8`.
 
 | Entity | Register | Description |
 | --- | --- | --- |
-| Climate | 40001, 40002, 40003, 40008, 40009 | On/off (`heat`/`off`), target temperature (0.5 °C steps), room temperature, heating/idle action, preset = operating mode (`manual`, `timer`, `schedule`) |
+| Climate | 40001, 40002, 40003, 40008, 40009 | On/off (`heat`/`off`), target temperature (5–50 °C in 0.5 °C steps), room temperature, heating/idle action, preset = operating mode (`manual`, `timer`) |
 | Temperature sensor | 40008 | Room temperature, for history and statistics |
 | Heating binary sensor | 40009 | On while the thermostat calls for heat |
 | Child lock switch | 40004 | Locks the keypad |
@@ -52,9 +52,9 @@ In the setup dialog enter the addresses as a list, e.g. `1, 2, 5-8`.
 ## Options
 
 *Configure* on the integration entry lets you change the thermostat addresses, polling
-interval (default 30 s), response timeout, delay between requests, min/max target
+interval (default 30 s), response timeout (default 1 s), delay between requests, min/max target
 temperature and **automatic clock sync** (re-sets the clock whenever it drifts by more
-than 2 minutes; the timer and schedule modes depend on it). *Reconfigure* changes how
+than 2 minutes; the timer mode depends on it). *Reconfigure* changes how
 the bus is connected without losing entities.
 
 ## Sharing the bus with other Modbus devices
@@ -75,11 +75,13 @@ meters, heat pumps, …) handled by other integrations:
   thermostat that stops answering becomes unavailable after two missed polls and is
   then only retried every 5 minutes, because every unanswered request holds up the
   whole bus until it times out.
-* **No effect on other devices' timing.** The *delay between requests* only paces
-  requests to the thermostats. The *response timeout* applies to the whole shared
-  connection, so it is left at Home Assistant's default unless you set it (Home
-  Assistant 2026.10+; 2026.9 always uses 10 s). Both are withdrawn when the
-  integration unloads.
+* **Short stalls only.** A lost request holds up the whole shared bus until it times
+  out, so the integration asks for a 1 s response timeout (the thermostats answer
+  within about 40 ms) instead of Home Assistant's 10 s default. That timeout is a
+  minimum for the shared connection: an integration that asks for a longer one still
+  gets it. It needs Home Assistant 2026.10+ (2026.9 always uses 10 s). The *delay
+  between requests* only paces requests to the thermostats. Both are withdrawn when
+  the integration unloads.
 * **Modbus YAML hubs** (`modbus:` in `configuration.yaml`) open a separate
   connection of their own. If one points at the same port or host, a repair issue
   warns you, because the two connections' requests can collide on the bus.
@@ -90,23 +92,51 @@ label isn't sent anywhere. The real RS485 speed is whatever the serial server is
 configured for (9600 for these thermostats), so you don't need to change any
 device.
 
+## Troubleshooting the RS485 bus
+
+* **No thermostat found:** check the address on the thermostat itself (option **C**, see
+  above). It may not be 1.
+* **Thermostats answer only some of the time:** this is normal for these thermostats.
+  They ignore roughly 30–70 % of requests, with clean replies to the rest. This was
+  measured on a single thermostat both on an unbiased bus and on a properly biased one
+  behind a serial device server, and it doesn't depend on timing or request size. The
+  integration repeats each request up to 8 times with a 1 s timeout. A thermostat
+  answers in about 25–50 ms, so this costs little.
+* **Bus wiring:** RS485 still needs fail-safe bias for reliable communication. If A–B
+  measures about 0 V with the bus idle, enable the bias (and 120 Ω termination)
+  jumpers on your USB adapter or serial server. Otherwise add about 680 Ω from A to
+  +5 V and from B to GND at one point on the bus; idle should then read roughly
+  0.2–1 V.
+
 ## Protocol notes
 
-* Function codes 0x03 (read holding registers) and 0x06 (write single register),
-  registers 40001-40009 (offsets 0-8). Temperatures are value × 10.
-* The protocol document describes register 40003 as "internal sensor temperature × 10",
-  but it is the writable register and 40008 is the measured room temperature, so it is
-  treated as the **set point**. The document also shows only the low byte being used;
-  the full 16-bit register is used here so set points above 25.5 °C work. If your
-  thermostats behave differently, please open an issue.
+Function codes 0x03 (read holding registers) and 0x06 (write single register),
+registers 40001–40009 (offsets 0–8), temperatures as value × 10. Verified on a PTB
+thermostat by watching its display while writing each register:
+
+| Register | Meaning | Confirmed behaviour |
+| --- | --- | --- |
+| 40001 | Power | 0 = off (display dark), 1 = on |
+| 40002 | Mode | 0 = manual, 1 = timer (display shows the timer state, e.g. "ON"). **2 (programming mode in the document) and higher are ignored** by the tested firmware |
+| 40003 | Set point × 10 | Shown as "Set". The document calls it "internal sensor temperature" and shows only the low byte, but it is the set point and uses the **full 16-bit register**: 5.0–50.0 °C are accepted. Values are rounded down to 0.5 °C (22.3 → 22.0) |
+| 40004 | Keypad lock | 0/1, shows a lock icon |
+| 40005–40007 | Minute, hour, weekday | Weekday 1 = Monday … 7 = Sunday; 0 is accepted and shows no day |
+| 40008 | Room temperature × 10 | Read only |
+| 40009 | Heating | 1 while calling for heat (flame icon); follows a set point change after a few seconds |
+
+* **Out-of-range writes are acknowledged but ignored.** The thermostat echoes the write
+  as if it succeeded and keeps its old value. The integration therefore reads every
+  write back, repeats it if it didn't stick (rarely, a valid write is lost), and
+  reports an error if the thermostat refuses it.
+* **Hysteresis:** heating switches on when the room is 1.0 °C or more below the set
+  point and off when the room reaches the set point.
 * The document lists the CRC as "high, low"; standard Modbus byte order (low byte
-  first) is used, as the document otherwise refers to standard Modbus RTU.
+  first) is what the thermostats use.
 * Thermostats whose firmware lacks register 40009 are handled (heating state unknown).
 * Modbus communication uses [modbus-connection](https://home-assistant-libs.github.io/modbus-connection/)
   through Home Assistant's `modbus` integration, so the integration has no Python
   requirements of its own and can't conflict with the library versions Home Assistant
-  ships. Writes use function code 0x06 (write single register), the only write
-  function the thermostats support.
+  ships.
 
 ## Development
 
