@@ -45,21 +45,28 @@ In gateway mode the serial server converts Modbus TCP to RTU itself. Set it up l
   each empty address in a scan, holds up the bus for the full timeout. Shortening
   it makes scans and retries several times faster:
 
-  1. In the gateway's settings, set the Modbus/RTU response timeout to about
-     **300 ms**.
-  2. In Home Assistant, set the *response timeout* to about **0.5 s**, both in
+  1. In the gateway's settings, set the Modbus/RTU response timeout to **200 ms**.
+  2. In Home Assistant, set the *response timeout* to **0.3 s**, both in
      *Configure* on the integration entry and in the scan form when scanning.
 
   Home Assistant's timeout must always stay above the gateway's. If it is shorter,
   each new request reaches the gateway while it is still waiting and gets dropped,
-  and thermostats appear to stop answering. If that happens after lowering the
-  timeouts, raise Home Assistant's again. (Tested only with a 1000 ms gateway
-  timeout and 1.5 s in Home Assistant.)
+  and thermostats appear to stop answering. Measured with a 200 ms gateway timeout
+  and alternating requests between a thermostat and an empty address, the
+  thermostat answered 12–17 % of requests with Home Assistant timeouts of 0.1–0.15 s,
+  but 42–50 % (its normal rate) with 0.25–1 s.
 
-Tested with a serial server in gateway mode (gateway timeout 1000 ms) and 8
-thermostats. The scan found all 8 (addresses 1–32, count 8) in 2–4.5 minutes;
-with the 0.25 s scan timeout used for raw TCP, it found only 5–6 of them. Polling
-and writes behaved like the raw TCP connection.
+  Results on a bus with 8 thermostats:
+
+  | Gateway / Home Assistant timeout | Scan 1–32, count 8 | Poll of all 8 | One change |
+  | --- | --- | --- | --- |
+  | 1000 ms / 1.5 s | 2–4.5 min | 7–20 s | 0.2–16 s |
+  | 200 ms / 0.3 s | 18–55 s | 3–12 s | 0.6–1.6 s |
+
+Tested with a serial server in gateway mode and 8 thermostats: every scan with the
+right timeout found all 8, and polling and writes behaved like the raw TCP
+connection. With a 1000 ms gateway timeout and the 0.25 s scan timeout used for
+raw TCP, scans found only 5–6 of them.
 
 ## Installation
 
@@ -90,8 +97,8 @@ requests, so this finds a thermostat about 98 % of the time; the result is shown
 before anything is saved, so you can add one the scan missed. Scanning 1–32 takes
 about a minute; on a real bus with one thermostat it found it in each of 3 runs
 (48 s each). Through a Modbus TCP gateway each silent address costs the longer
-gateway timeout (1.5 s by default), so a scan takes several minutes; scan a
-narrower range if you know where the addresses are.
+gateway timeout (1.5 s by default), so a scan takes several minutes unless you
+shorten the gateway's timeout (see [Modbus TCP gateways](#modbus-tcp-gateways)).
 
 If you enter **how many thermostats** there are (or, when scanning from
 *Configure*, how many are new), the scan stops as soon as it has found them all.
