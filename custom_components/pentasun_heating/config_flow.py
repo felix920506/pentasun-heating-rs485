@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 import logging
 from typing import Any
 
-from modbus_connection import ModbusError
+from modbus_connection import ModbusConnectionError, ModbusError
 import voluptuous as vol
 
 from homeassistant.components import usb
@@ -47,6 +48,7 @@ from .const import (
     DEFAULT_MODBUS_TCP_PORT,
     DEFAULT_PARITY,
     DEFAULT_SCAN_INTERVAL,
+    DEFAULT_SCAN_RANGE,
     DEFAULT_STOPBITS,
     DEFAULT_TIMEOUT,
     DOMAIN,
@@ -56,17 +58,21 @@ from .const import (
     SETPOINT_MIN,
 )
 from .bus import (
+    ScanResult,
     async_get_bus_usage,
     async_read_thermostat,
+    async_scan_bus,
     build_params,
     looks_like_thermostat,
     require_timeout,
+    scan_supported,
 )
 from .coordinator import PentasunConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
 CONF_SKIP_CHECK = "skip_check"
+CONF_SCAN_RANGE = "scan_range"
 
 DEFAULT_OPTIONS: dict[str, Any] = {
     CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
@@ -267,7 +273,94 @@ async def _async_probe(
     return None, placeholders
 
 
-class PentasunConfigFlow(ConfigFlow, domain=DOMAIN):
+class _ScanSteps:
+    """Bus scan steps shared by the config flow and the options flow."""
+
+    hass: Any
+    _scan_task: asyncio.Task[ScanResult] | None = None
+    _scan_range: list[int]
+    _scan_error: str | None = None
+    _scan_error_detail: str = ""
+    _scan_result: ScanResult | None = None
+
+    def _scan_target(self) -> tuple[Mapping[str, Any], str | None, list[int]]:
+        """Return the connection data, own entry id and already known addresses."""
+        raise NotImplementedError
+
+    async def async_step_scan(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Ask which addresses to scan."""
+        errors: dict[str, str] = {}
+        if self._scan_error:
+            errors["base"], self._scan_error = self._scan_error, None
+        if user_input is not None:
+            try:
+                self._scan_range = parse_addresses(user_input[CONF_SCAN_RANGE])
+            except InvalidAddresses:
+                errors[CONF_SCAN_RANGE] = "invalid_addresses"
+            else:
+                return await self.async_step_scan_progress()
+        schema = vol.Schema(
+            {vol.Required(CONF_SCAN_RANGE, default=DEFAULT_SCAN_RANGE): str}
+        )
+        return self.async_show_form(
+            step_id="scan",
+            data_schema=self.add_suggested_values_to_schema(schema, user_input),
+            errors=errors,
+            description_placeholders={"error": self._scan_error_detail},
+        )
+
+    async def async_step_scan_progress(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Scan the bus in the background, showing progress."""
+        if self._scan_task is None:
+            data, exclude_entry_id, known = self._scan_target()
+            addresses = [a for a in self._scan_range if a not in known]
+            self._scan_task = self.hass.async_create_task(
+                async_scan_bus(
+                    self.hass,
+                    build_params(data),
+                    addresses,
+                    exclude_entry_id=exclude_entry_id,
+                    on_progress=self.async_update_progress,
+                ),
+                f"{DOMAIN} bus scan",
+            )
+        if not self._scan_task.done():
+            return self.async_show_progress(
+                step_id="scan_progress",
+                progress_action="scan",
+                progress_task=self._scan_task,
+                description_placeholders={
+                    "range": format_addresses(self._scan_range)
+                    if len(self._scan_range) < 6
+                    else f"{self._scan_range[0]}-{self._scan_range[-1]}"
+                },
+            )
+        task, self._scan_task = self._scan_task, None
+        try:
+            self._scan_result = task.result()
+        except ModbusConnectionError as err:
+            _LOGGER.debug("Scan failed: %s", err)
+            self._scan_error = "cannot_connect"
+            return self.async_show_progress_done(next_step_id="scan")
+        except HomeAssistantError as err:
+            self._scan_error, self._scan_error_detail = "link_conflict", str(err)
+            return self.async_show_progress_done(next_step_id="scan")
+        return self.async_show_progress_done(next_step_id="scan_result")
+
+    def _scan_placeholders(self) -> dict[str, str]:
+        result = self._scan_result or ScanResult()
+        return {
+            "found": format_addresses(result.thermostats) or "-",
+            "other": format_addresses(result.other_devices) or "-",
+            "skipped": format_addresses(result.skipped) or "-",
+        }
+
+
+class PentasunConfigFlow(_ScanSteps, ConfigFlow, domain=DOMAIN):
     """Handle a config flow for a thermostat bus."""
 
     VERSION = 1
@@ -361,7 +454,7 @@ class PentasunConfigFlow(ConfigFlow, domain=DOMAIN):
             await self.async_set_unique_id(_unique_id(self._data))
             if self.source != SOURCE_RECONFIGURE:
                 self._abort_if_unique_id_configured()
-                return await self.async_step_thermostats()
+                return await self.async_step_add_thermostats()
 
             entry = self._get_reconfigure_entry()
             if self.unique_id != entry.unique_id:
@@ -393,10 +486,41 @@ class PentasunConfigFlow(ConfigFlow, domain=DOMAIN):
             description_placeholders=placeholders,
         )
 
+    async def async_step_add_thermostats(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Scan the bus for thermostats or enter their addresses."""
+        if not scan_supported():
+            return await self.async_step_thermostats()
+        return self.async_show_menu(
+            step_id="add_thermostats", menu_options=["scan", "thermostats"]
+        )
+
+    def _scan_target(self) -> tuple[Mapping[str, Any], str | None, list[int]]:
+        return self._data, None, []
+
     async def async_step_thermostats(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Enter the Modbus addresses of the thermostats on the bus."""
+        return await self._async_addresses_step("thermostats", user_input, "1")
+
+    async def async_step_scan_result(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Confirm the thermostats the scan found."""
+        found = self._scan_result.thermostats if self._scan_result else []
+        return await self._async_addresses_step(
+            "scan_result", user_input, format_addresses(found), self._scan_placeholders()
+        )
+
+    async def _async_addresses_step(
+        self,
+        step_id: str,
+        user_input: dict[str, Any] | None,
+        default: str,
+        extra_placeholders: dict[str, str] | None = None,
+    ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         placeholders = dict.fromkeys(PROBE_PLACEHOLDERS, "")
         if user_input is not None:
@@ -422,22 +546,67 @@ class PentasunConfigFlow(ConfigFlow, domain=DOMAIN):
 
         schema = vol.Schema(
             {
-                vol.Required(CONF_ADDRESSES, default="1"): str,
+                vol.Required(CONF_ADDRESSES, default=default): str,
                 vol.Optional(CONF_SKIP_CHECK, default=False): bool,
             }
         )
         return self.async_show_form(
-            step_id="thermostats",
+            step_id=step_id,
+            data_schema=self.add_suggested_values_to_schema(schema, user_input),
+            errors=errors,
+            description_placeholders=placeholders | (extra_placeholders or {}),
+        )
+
+
+class PentasunOptionsFlow(_ScanSteps, OptionsFlowWithReload):
+    """Change thermostat addresses and polling settings, or scan for more."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Choose between the settings and a bus scan."""
+        if not scan_supported():
+            return await self.async_step_settings()
+        return self.async_show_menu(step_id="init", menu_options=["settings", "scan"])
+
+    def _scan_target(self) -> tuple[Mapping[str, Any], str | None, list[int]]:
+        entry = self.config_entry
+        return entry.data, entry.entry_id, list(entry.options[CONF_ADDRESSES])
+
+    async def async_step_scan_result(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Add the thermostats the scan found to the existing ones."""
+        entry = self.config_entry
+        errors: dict[str, str] = {}
+        placeholders = dict.fromkeys(PROBE_PLACEHOLDERS, "") | self._scan_placeholders()
+        if user_input is not None:
+            try:
+                addresses = parse_addresses(user_input[CONF_ADDRESSES])
+            except InvalidAddresses:
+                errors[CONF_ADDRESSES] = "invalid_addresses"
+            else:
+                error, probe = await _async_probe(
+                    self.hass, entry.data, addresses, entry.entry_id, read=False
+                )
+                placeholders |= probe
+                if error:
+                    errors[CONF_ADDRESSES] = error
+                else:
+                    return self.async_create_entry(
+                        data={**entry.options, CONF_ADDRESSES: addresses}
+                    )
+        found = self._scan_result.thermostats if self._scan_result else []
+        default = format_addresses(sorted({*entry.options[CONF_ADDRESSES], *found}))
+        schema = vol.Schema({vol.Required(CONF_ADDRESSES, default=default): str})
+        return self.async_show_form(
+            step_id="scan_result",
             data_schema=self.add_suggested_values_to_schema(schema, user_input),
             errors=errors,
             description_placeholders=placeholders,
         )
 
-
-class PentasunOptionsFlow(OptionsFlowWithReload):
-    """Change thermostat addresses and polling settings."""
-
-    async def async_step_init(
+    async def async_step_settings(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Manage the options."""
@@ -498,7 +667,7 @@ class PentasunOptionsFlow(OptionsFlowWithReload):
             CONF_ADDRESSES: format_addresses(options.get(CONF_ADDRESSES, [])),
         }
         return self.async_show_form(
-            step_id="init",
+            step_id="settings",
             data_schema=self.add_suggested_values_to_schema(
                 schema, user_input or suggested
             ),

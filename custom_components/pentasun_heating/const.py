@@ -87,3 +87,9 @@ WRITE_VERIFY_ATTEMPTS: Final = 3
 # Set point range the thermostats accept; other values are silently ignored
 SETPOINT_MIN: Final = 5.0
 SETPOINT_MAX: Final = 50.0
+
+# Bus scan: each address is asked once per round, for this many rounds, so a
+# thermostat that ignores half its requests is still found ~98 % of the time.
+SCAN_ROUNDS: Final = 6
+SCAN_TIMEOUT: Final = 0.25  # seconds; thermostats answer within ~60 ms
+DEFAULT_SCAN_RANGE: Final = "1-32"

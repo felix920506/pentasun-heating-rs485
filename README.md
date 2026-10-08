@@ -36,7 +36,26 @@ Each thermostat on a bus needs a unique address (default `1`). With the thermost
 options, press **M** until option **C** is shown, and change the value with the
 up/down keys. Switch the thermostat on to save it.
 
-In the setup dialog enter the addresses as a list, e.g. `1, 2, 5-8`.
+### Finding the thermostats on a bus
+
+After choosing the connection, setup offers to **scan the bus** (Home Assistant
+2026.10 or newer) or to enter the addresses yourself as a list, e.g. `1, 2, 5-8`.
+To add thermostats later, use *Configure → Scan for new thermostats* on the
+integration entry.
+
+The scan asks every address in the chosen range (default 1–32) once per round, for
+6 rounds, with a short 0.25 s timeout. The thermostats ignore about half of all
+requests, so this finds a thermostat about 98 % of the time; the result is shown
+before anything is saved, so you can add one the scan missed. Scanning 1–32 takes
+about a minute; on a real bus with one thermostat it found it in each of 3 runs
+(48 s each).
+
+Scanning is safe on a bus shared with other devices: addresses other integrations
+use are never polled, devices that answer but don't look like a PTB thermostat
+(e.g. an energy meter) are listed but not added, and the requests go over the
+shared connection, so other integrations keep working during the scan. Home
+Assistant 2026.9 can't shorten the 10 s Modbus timeout, which would make a scan
+take tens of minutes, so there you enter the addresses manually.
 
 ## Entities (per thermostat)
 

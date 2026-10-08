@@ -42,7 +42,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr, issue_registry as ir
 from homeassistant.util import dt as dt_util
 
-from custom_components.pentasun_heating.bus import SOCKET_BAUDRATE
+from custom_components.pentasun_heating.bus import SOCKET_BAUDRATE, scan_supported
 from custom_components.pentasun_heating.const import (
     CONF_ADDRESSES,
     CONF_AUTO_SYNC_CLOCK,
@@ -69,6 +69,10 @@ try:
     from homeassistant.components.modbus.connection import async_get_connection_info
 except ImportError:  # Home Assistant 2026.9
     async_get_connection_info = None
+
+needs_scan = pytest.mark.skipif(
+    not scan_supported(), reason="Scanning needs Home Assistant 2026.10 or newer"
+)
 
 needs_connection_info = pytest.mark.skipif(
     async_get_connection_info is None,
@@ -124,7 +128,12 @@ async def _start_flow(hass: HomeAssistant, conn: str, user_input: dict) -> dict:
         result["flow_id"], {"next_step_id": conn}
     )
     assert result["step_id"] == conn
-    return await hass.config_entries.flow.async_configure(result["flow_id"], user_input)
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], user_input)
+    if result["type"] is FlowResultType.MENU and result["step_id"] == "add_thermostats":
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"next_step_id": "thermostats"}
+        )
+    return result
 
 
 async def test_config_flow(hass: HomeAssistant, mbap_bus: ThermostatBus) -> None:
@@ -472,7 +481,11 @@ async def test_not_ready_and_options(hass: HomeAssistant, rtu_bus: ThermostatBus
     assert len(devices) == 2
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] is FlowResultType.FORM
+    if result["type"] is FlowResultType.MENU:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"next_step_id": "settings"}
+        )
+    assert result["step_id"] == "settings"
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         {
@@ -521,3 +534,115 @@ async def test_reconfigure(hass: HomeAssistant, rtu_bus: ThermostatBus, mbap_bus
     assert entry.data[CONF_CONNECTION_TYPE] == CONN_MODBUS_TCP
     assert entry.unique_id == f"127.0.0.1:{mbap_bus.port}"
     assert hass.states.get(CLIMATE_1).state == HVACMode.HEAT
+
+
+async def _finish_scan(flow_manager, result: dict) -> dict:
+    """Wait for the background scan and return the step after the progress bar."""
+    assert result["type"] is FlowResultType.SHOW_PROGRESS
+    await flow_manager.hass.async_block_till_done(wait_background_tasks=True)
+    result = await flow_manager.async_configure(result["flow_id"])
+    assert result["type"] is not FlowResultType.SHOW_PROGRESS
+    return result
+
+
+@needs_scan
+async def test_scan_flow(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
+    """A scan finds lossy thermostats, ignores other devices and skips used addresses."""
+    rtu_bus.add(3)
+    rtu_bus.add(7)
+    rtu_bus.add(9, [2300, 2310, 2290, 50, 61, 0, 0, 0, 0])  # a meter, not a thermostat
+    rtu_bus.add(12)  # used by another integration: must not be polled
+    _other_integration(hass, rtu_bus, 12)
+    rtu_bus.loss_rate = 0.5  # like the real thermostats
+
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": CONN_RTU_OVER_TCP}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_HOST: "127.0.0.1", CONF_PORT: rtu_bus.port}
+    )
+    assert result["type"] is FlowResultType.MENU
+    assert result["menu_options"] == ["scan", "thermostats"]
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "scan"}
+    )
+    assert result["step_id"] == "scan"
+    requests = len(rtu_bus.requests)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"scan_range": "1-16"}
+    )
+    result = await _finish_scan(hass.config_entries.flow, result)
+    assert result["step_id"] == "scan_result"
+    assert result["description_placeholders"]["found"] == "3, 7"
+    assert result["description_placeholders"]["other"] == "9"
+    if async_get_connection_info is not None:
+        assert result["description_placeholders"]["skipped"] == "12"
+        assert 12 not in {unit for unit, _ in rtu_bus.requests[requests:]}
+
+    rtu_bus.loss_rate = 0
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_ADDRESSES: "3, 7"}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["options"][CONF_ADDRESSES] == [3, 7]
+
+
+@needs_scan
+async def test_scan_cannot_connect(hass: HomeAssistant) -> None:
+    """A scan of an unreachable bus returns to the scan form with an error."""
+    bus = ThermostatBus()
+    port = await bus.start("rtu")
+    await bus.stop()
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": CONN_RTU_OVER_TCP}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_HOST: "127.0.0.1", CONF_PORT: port}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "scan"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"scan_range": "1-4"}
+    )
+    result = await _finish_scan(hass.config_entries.flow, result)
+    assert result["step_id"] == "scan"
+    assert result["errors"] == {"base": "cannot_connect"}
+
+
+@needs_scan
+async def test_options_scan_adds_thermostats(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
+    """Scanning from the options adds newly found thermostats to the configured ones."""
+    rtu_bus.add(3)
+    entry = _entry(rtu_bus, [3])
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    rtu_bus.add(7)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.MENU
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "scan"}
+    )
+    requests = len(rtu_bus.requests)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"scan_range": "1-8"}
+    )
+    result = await _finish_scan(hass.config_entries.options, result)
+    assert result["step_id"] == "scan_result"
+    assert result["description_placeholders"]["found"] == "7"
+    # The configured thermostat isn't scanned again
+    scanned = [unit for unit, _ in rtu_bus.requests[requests:]]
+    assert scanned.count(3) <= 1  # at most one regular poll during the scan
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_ADDRESSES: "3, 7"}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert entry.options[CONF_ADDRESSES] == [3, 7]
+    assert entry.options[CONF_SCAN_INTERVAL] == 30  # other options kept
+    assert hass.states.get("climate.thermostat_7").state == HVACMode.HEAT

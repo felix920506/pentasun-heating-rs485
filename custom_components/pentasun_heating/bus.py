@@ -9,13 +9,16 @@ serialized on one link instead of colliding on the wire.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 import logging
 from typing import Any
 
 from modbus_connection import (
     IllegalDataAddressError,
+    ModbusConnectionError,
+    ModbusExceptionError,
     ModbusProtocolError,
     ModbusSerialParams,
     ModbusTcpParams,
@@ -23,6 +26,7 @@ from modbus_connection import (
     ModbusUnit,
 )
 
+from homeassistant.components.modbus import async_get_temporary_unit
 from homeassistant.const import CONF_DEVICE, CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant, callback
 
@@ -51,6 +55,8 @@ from .const import (
     REGISTER_COUNT,
     REQUEST_ATTEMPTS_PER_BURST,
     REQUEST_BURST_PAUSES,
+    SCAN_ROUNDS,
+    SCAN_TIMEOUT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -232,3 +238,98 @@ def _hub_endpoint(hub: Any) -> tuple | None:
     if str(getattr(params.get("framer"), "value", params.get("framer"))) == "rtu":
         return ("serial", _url("socket", host, port))
     return ("tcp", host, port)
+
+
+def scan_supported() -> bool:
+    """Return True if the bus can be scanned in reasonable time.
+
+    Scanning needs a short response timeout, which modbus-connection 4.12
+    (Home Assistant 2026.10) can set; with the fixed 10 s timeout of older
+    versions every empty address would take minutes.
+    """
+    return hasattr(ModbusUnit, "require_timeout")
+
+
+@dataclass
+class ScanResult:
+    """What a bus scan found."""
+
+    thermostats: list[int] = field(default_factory=list)
+    other_devices: list[int] = field(default_factory=list)
+    """Addresses where a device answered that doesn't look like a thermostat."""
+    skipped: list[int] = field(default_factory=list)
+    """Addresses not scanned because another integration uses them."""
+
+
+async def _async_read_once(unit: ModbusUnit) -> list[int]:
+    """One read of the register block, for scanning (no repeats)."""
+    try:
+        return await unit.read_holding_registers(0, REGISTER_COUNT)
+    except IllegalDataAddressError:
+        return await unit.read_holding_registers(0, REGISTER_COUNT - 1)
+
+
+async def async_scan_bus(
+    hass: HomeAssistant,
+    params: ModbusParams,
+    addresses: Iterable[int],
+    *,
+    exclude_entry_id: str | None = None,
+    on_progress: Callable[[float], None] | None = None,
+) -> ScanResult:
+    """Look for thermostats on the bus.
+
+    Every candidate address is asked once per round, for ``SCAN_ROUNDS``
+    rounds, so the tries for one address are spread over the whole scan; an
+    address drops out as soon as anything answers. Addresses other
+    integrations use on this bus are never polled. Requests go over the
+    shared connection, so other integrations keep working during a scan.
+
+    Raises ``ModbusConnectionError`` if the bus can't be reached and
+    ``HomeAssistantError`` if the link is in use with other settings.
+    """
+    result = ScanResult()
+    usage = async_get_bus_usage(hass, params, exclude_entry_id)
+    taken = {unit for units in usage.entry_units.values() for unit in units}
+    taken |= {unit for units in usage.yaml_hubs.values() for unit in units or ()}
+    remaining = [address for address in addresses if address not in taken]
+    result.skipped = sorted(set(addresses) & taken)
+
+    async with AsyncExitStack() as stack:
+        units: dict[int, ModbusUnit] = {}
+        for address in remaining:
+            unit = await stack.enter_async_context(
+                async_get_temporary_unit(hass, params, address)
+            )
+            # Withdrawn before the unit is released; nobody else uses these
+            # addresses, so the requirement can't clobber another integration's.
+            stack.callback(require_timeout(unit, SCAN_TIMEOUT))
+            units[address] = unit
+
+        for scan_round in range(SCAN_ROUNDS):
+            pending = list(remaining)
+            for index, address in enumerate(pending):
+                if on_progress:
+                    on_progress((scan_round + index / len(pending)) / SCAN_ROUNDS)
+                unit = units[address]
+                try:
+                    regs = await _async_read_once(unit)
+                except (ModbusTimeoutError, ModbusProtocolError) as err:
+                    if not unit.connected:
+                        raise ModbusConnectionError(str(err)) from err
+                    continue
+                except ModbusExceptionError:
+                    # Something answered, but refuses the thermostat registers.
+                    regs = None
+                remaining.remove(address)
+                if regs is not None and looks_like_thermostat(regs):
+                    result.thermostats.append(address)
+                else:
+                    result.other_devices.append(address)
+                _LOGGER.debug("Scan: address %s answered %s", address, regs)
+            if not remaining:
+                break
+
+    result.thermostats.sort()
+    result.other_devices.sort()
+    return result

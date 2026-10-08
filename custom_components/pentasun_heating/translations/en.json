@@ -81,6 +81,36 @@
           "addresses": "Separate with commas; ranges are allowed, e.g. 1, 2, 5-8.",
           "skip_check": "Use this when some thermostats are not powered yet."
         }
+      },
+      "add_thermostats": {
+        "title": "Add thermostats",
+        "description": "Scan the bus to find the thermostats automatically, or enter their addresses yourself.",
+        "menu_options": {
+          "scan": "Scan the bus for thermostats",
+          "thermostats": "Enter addresses manually"
+        }
+      },
+      "scan": {
+        "title": "Scan the bus",
+        "description": "Each address is asked several times, because the thermostats ignore some requests. Scanning 32 addresses takes about a minute, longer on a busy bus. Addresses other integrations use on this bus are skipped. {error}",
+        "data": {
+          "scan_range": "Addresses to scan"
+        },
+        "data_description": {
+          "scan_range": "Thermostats leave the factory with address 1. Ranges are allowed, e.g. 1-32 or 1-255 (slower)."
+        }
+      },
+      "scan_result": {
+        "title": "Scan results",
+        "description": "Thermostats found: {found}\nOther devices that answered (not added): {other}\nSkipped, used by other integrations: {skipped}\n\nCheck the list below and add any thermostat the scan missed.",
+        "data": {
+          "addresses": "Addresses",
+          "skip_check": "Add without checking that they respond"
+        },
+        "data_description": {
+          "addresses": "Separate with commas; ranges are allowed, e.g. 1, 2, 5-8.",
+          "skip_check": "Use this when some thermostats are not powered yet."
+        }
       }
     },
     "error": {
@@ -95,11 +125,14 @@
     "abort": {
       "already_configured": "This bus is already configured.",
       "reconfigure_successful": "The connection was updated."
+    },
+    "progress": {
+      "scan": "Scanning addresses {range} for thermostats. This can take a few minutes."
     }
   },
   "options": {
     "step": {
-      "init": {
+      "settings": {
         "title": "Thermostat bus options",
         "data": {
           "addresses": "Thermostat addresses",
@@ -116,12 +149,44 @@
           "message_delay": "Minimum pause between requests to the same thermostat. Does not slow down other devices on the bus.",
           "auto_sync_clock": "Set the thermostat clock from Home Assistant whenever it is more than 2 minutes off. Needed for the timer and schedule modes."
         }
+      },
+      "init": {
+        "title": "Thermostat bus options",
+        "menu_options": {
+          "settings": "Addresses and polling settings",
+          "scan": "Scan for new thermostats"
+        }
+      },
+      "scan": {
+        "title": "Scan the bus",
+        "description": "Each address is asked several times, because the thermostats ignore some requests. Scanning 32 addresses takes about a minute, longer on a busy bus. Addresses other integrations use on this bus are skipped. {error}",
+        "data": {
+          "scan_range": "Addresses to scan"
+        },
+        "data_description": {
+          "scan_range": "Thermostats leave the factory with address 1. Ranges are allowed, e.g. 1-32 or 1-255 (slower)."
+        }
+      },
+      "scan_result": {
+        "title": "Scan results",
+        "description": "New thermostats found: {found}\nOther devices that answered (not added): {other}\nSkipped, used by other integrations: {skipped}\n\nThe list below includes the thermostats already configured.",
+        "data": {
+          "addresses": "Thermostat addresses"
+        },
+        "data_description": {
+          "addresses": "Separate with commas; ranges are allowed, e.g. 1, 2, 5-8."
+        }
       }
     },
     "error": {
       "invalid_addresses": "Enter addresses between 1 and 255, e.g. 1, 2, 5-8.",
       "invalid_temp_range": "The maximum must be above the minimum.",
-      "address_in_use": "Address(es) {addresses} are already used on this bus by {users}. Every device on a bus needs its own address."
+      "address_in_use": "Address(es) {addresses} are already used on this bus by {users}. Every device on a bus needs its own address.",
+      "cannot_connect": "Failed to connect to the bus. Check the port or host and port.",
+      "link_conflict": "This port or host is already used by another integration with different serial settings: {error}"
+    },
+    "progress": {
+      "scan": "Scanning addresses {range} for thermostats. This can take a few minutes."
     }
   },
   "selector": {

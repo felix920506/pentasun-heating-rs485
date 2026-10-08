@@ -81,6 +81,36 @@
           "addresses": "以逗號分隔，可使用範圍，例如 1, 2, 5-8。",
           "skip_check": "若部分溫控器尚未通電，請勾選此項。"
         }
+      },
+      "add_thermostats": {
+        "title": "新增溫控器",
+        "description": "掃描匯流排自動尋找溫控器，或自行輸入位址。",
+        "menu_options": {
+          "scan": "掃描匯流排尋找溫控器",
+          "thermostats": "手動輸入位址"
+        }
+      },
+      "scan": {
+        "title": "掃描匯流排",
+        "description": "由於溫控器會忽略部分請求，每個位址會詢問多次。掃描 32 個位址約需一分鐘，匯流排忙碌時會更久。此匯流排上其他整合使用中的位址會被略過。{error}",
+        "data": {
+          "scan_range": "掃描的位址"
+        },
+        "data_description": {
+          "scan_range": "溫控器出廠位址為 1。可使用範圍，例如 1-32 或 1-255（較慢）。"
+        }
+      },
+      "scan_result": {
+        "title": "掃描結果",
+        "description": "找到的溫控器：{found}\n有回應的其他裝置（不會新增）：{other}\n已略過（其他整合使用中）：{skipped}\n\n請確認下方清單，並補上掃描遺漏的溫控器。",
+        "data": {
+          "addresses": "位址",
+          "skip_check": "不檢查回應，直接新增"
+        },
+        "data_description": {
+          "addresses": "以逗號分隔，可使用範圍，例如 1, 2, 5-8。",
+          "skip_check": "若部分溫控器尚未通電，請勾選此項。"
+        }
       }
     },
     "error": {
@@ -95,11 +125,14 @@
     "abort": {
       "already_configured": "此匯流排已經設定過了。",
       "reconfigure_successful": "連線設定已更新。"
+    },
+    "progress": {
+      "scan": "正在掃描位址 {range} 尋找溫控器，可能需要幾分鐘。"
     }
   },
   "options": {
     "step": {
-      "init": {
+      "settings": {
         "title": "溫控器匯流排選項",
         "data": {
           "addresses": "溫控器位址",
@@ -116,12 +149,44 @@
           "message_delay": "對同一台溫控器連續請求之間的最短間隔，不會拖慢匯流排上的其他裝置。",
           "auto_sync_clock": "溫控器時鐘誤差超過 2 分鐘時，以 Home Assistant 的時間校正。定時與程式模式需要正確的時鐘。"
         }
+      },
+      "init": {
+        "title": "溫控器匯流排選項",
+        "menu_options": {
+          "settings": "位址與輪詢設定",
+          "scan": "掃描新的溫控器"
+        }
+      },
+      "scan": {
+        "title": "掃描匯流排",
+        "description": "由於溫控器會忽略部分請求，每個位址會詢問多次。掃描 32 個位址約需一分鐘，匯流排忙碌時會更久。此匯流排上其他整合使用中的位址會被略過。{error}",
+        "data": {
+          "scan_range": "掃描的位址"
+        },
+        "data_description": {
+          "scan_range": "溫控器出廠位址為 1。可使用範圍，例如 1-32 或 1-255（較慢）。"
+        }
+      },
+      "scan_result": {
+        "title": "掃描結果",
+        "description": "找到的新溫控器：{found}\n有回應的其他裝置（不會新增）：{other}\n已略過（其他整合使用中）：{skipped}\n\n下方清單已包含已設定的溫控器。",
+        "data": {
+          "addresses": "溫控器位址"
+        },
+        "data_description": {
+          "addresses": "以逗號分隔，可使用範圍，例如 1, 2, 5-8。"
+        }
       }
     },
     "error": {
       "invalid_addresses": "請輸入 1 到 255 之間的位址，例如 1, 2, 5-8。",
       "invalid_temp_range": "最高溫度必須大於最低溫度。",
-      "address_in_use": "位址 {addresses} 在此匯流排上已被 {users} 使用。匯流排上的每台裝置都需要獨立的位址。"
+      "address_in_use": "位址 {addresses} 在此匯流排上已被 {users} 使用。匯流排上的每台裝置都需要獨立的位址。",
+      "cannot_connect": "無法連接匯流排，請檢查序列埠或主機與通訊埠。",
+      "link_conflict": "此序列埠或主機已被其他整合以不同的序列參數使用：{error}"
+    },
+    "progress": {
+      "scan": "正在掃描位址 {range} 尋找溫控器，可能需要幾分鐘。"
     }
   },
   "selector": {

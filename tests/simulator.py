@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 import struct
 
 
@@ -47,6 +48,8 @@ class ThermostatBus:
         self.connections = 0  # currently open client connections
         self.drop_next = 0  # ignore this many upcoming requests, like the real thermostat
         self.lose_writes = 0  # acknowledge but don't apply this many valid writes
+        self.loss_rate = 0.0  # ignore this share of requests at random (seeded)
+        self._rng = random.Random(1)
 
     def add(self, unit: int, regs: list[int] | None = None) -> list[int]:
         """Add a thermostat: on, manual, 22.0 °C target, 21.5 °C room, heating."""
@@ -58,6 +61,8 @@ class ThermostatBus:
         self.requests.append((unit, pdu))
         if self.drop_next:
             self.drop_next -= 1
+            return None
+        if self.loss_rate and self._rng.random() < self.loss_rate:
             return None
         regs = self.units.get(unit)
         if regs is None:
