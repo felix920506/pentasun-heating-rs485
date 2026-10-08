@@ -72,7 +72,7 @@
       },
       "thermostats": {
         "title": "Thermostats",
-        "description": "Enter the Modbus address of every thermostat on this bus. Other Modbus devices may share the bus as long as each device has its own address. The address is set on the thermostat: with it switched off, hold M and the clock key for 5 seconds, then press M until option C is shown. The default is 1.",
+        "description": "Enter the Modbus address of every thermostat on this bus. Other Modbus devices may share the bus as long as each device has its own address. The address is set on the thermostat: with it switched off, hold the menu key and the clock key for 5 seconds, then press the menu key until option 12 is shown. The default is 1.",
         "data": {
           "addresses": "Addresses",
           "skip_check": "Add without checking that they respond"
@@ -125,7 +125,7 @@
       "not_thermostat": "The device(s) at {addresses} answered, but don't look like PTB thermostats. Another kind of device on this bus may use that address.",
       "address_in_use": "Address(es) {addresses} are already used on this bus by {users}. Every device on a bus needs its own address.",
       "link_conflict": "This port or host is already used by another integration with different serial settings: {error}",
-      "missing_thermostats": "Only {found_count} of the {expected} thermostats answered, even after asking the silent addresses for another minute. Check that:\n- no two thermostats share an address (garbled replies, which this causes, came from: {garbled});\n- the wiring is reliable: A/B not swapped, bias and 120 Ω termination present, no loose terminals;\n- with a Modbus TCP gateway: the response timeout is longer than the gateway's own, and request caching or automatic polling in the gateway is turned off;\n- every thermostat is powered and its address (option C) is within the scanned range.\nAdd any missing addresses below, or go back and scan again."
+      "missing_thermostats": "Only {found_count} of the {expected} thermostats answered, even after asking the silent addresses for another minute. Check that:\n- no two thermostats share an address (garbled replies, which this causes, came from: {garbled});\n- the wiring is reliable: A/B not swapped, bias and 120 Ω termination present, no loose terminals;\n- with a Modbus TCP gateway: the response timeout is longer than the gateway's own, and request caching or automatic polling in the gateway is turned off;\n- every thermostat is powered and its address (option 12) is within the scanned range.\nAdd any missing addresses below, or go back and scan again."
     },
     "abort": {
       "already_configured": "This bus is already configured.",
@@ -193,7 +193,7 @@
       "address_in_use": "Address(es) {addresses} are already used on this bus by {users}. Every device on a bus needs its own address.",
       "cannot_connect": "Failed to connect to the bus. Check the port or host and port.",
       "link_conflict": "This port or host is already used by another integration with different serial settings: {error}",
-      "missing_thermostats": "Only {found_count} of the {expected} thermostats answered, even after asking the silent addresses for another minute. Check that:\n- no two thermostats share an address (garbled replies, which this causes, came from: {garbled});\n- the wiring is reliable: A/B not swapped, bias and 120 Ω termination present, no loose terminals;\n- with a Modbus TCP gateway: the response timeout is longer than the gateway's own, and request caching or automatic polling in the gateway is turned off;\n- every thermostat is powered and its address (option C) is within the scanned range.\nAdd any missing addresses below, or go back and scan again."
+      "missing_thermostats": "Only {found_count} of the {expected} thermostats answered, even after asking the silent addresses for another minute. Check that:\n- no two thermostats share an address (garbled replies, which this causes, came from: {garbled});\n- the wiring is reliable: A/B not swapped, bias and 120 Ω termination present, no loose terminals;\n- with a Modbus TCP gateway: the response timeout is longer than the gateway's own, and request caching or automatic polling in the gateway is turned off;\n- every thermostat is powered and its address (option 12) is within the scanned range.\nAdd any missing addresses below, or go back and scan again."
     },
     "progress": {
       "scan": "Scanning addresses {range} for thermostats. This can take a few minutes."

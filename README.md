@@ -80,9 +80,10 @@ Pentasun Floor Heating*.
 ### Setting thermostat addresses
 
 Each thermostat on a bus needs a unique address (default `1`). With the thermostat
-**switched off**, hold **M** and the **clock** key for 5 seconds to open the advanced
-options, press **M** until option **C** is shown, and change the value with the
-up/down keys. Switch the thermostat on to save it.
+**switched off**, hold the **menu** key and the **clock** key for 5 seconds to open
+the advanced options, press the **menu** key until option **12** is shown, and change
+the value with the up/down keys. Switch the thermostat on to save it. (The protocol
+document calls the menu key "M" and this option "C".)
 
 ### Finding the thermostats on a bus
 
@@ -174,7 +175,7 @@ device.
 
 ## Troubleshooting the RS485 bus
 
-* **No thermostat found:** check the address on the thermostat itself (option **C**, see
+* **No thermostat found:** check the address on the thermostat itself (option **12**, see
   above). It may not be 1.
 * **Thermostats answer only some of the time:** this is normal for these thermostats.
   They ignore roughly 30–70 % of requests, with clean replies to the rest. This was
