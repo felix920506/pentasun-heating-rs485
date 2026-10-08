@@ -45,8 +45,8 @@ class PentasunChildLock(PentasunEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Lock the keypad."""
-        await self.coordinator.async_write(self.address, REG_LOCK, 1, locked=True)
+        await self.coordinator.async_write(self.address, REG_LOCK, 1)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Unlock the keypad."""
-        await self.coordinator.async_write(self.address, REG_LOCK, 0, locked=False)
+        await self.coordinator.async_write(self.address, REG_LOCK, 0)

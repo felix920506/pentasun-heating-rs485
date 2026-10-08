@@ -112,7 +112,7 @@
         },
         "data_description": {
           "addresses": "以逗號分隔，可使用範圍，例如 1, 2, 5-8。",
-          "timeout": "留空則使用 Home Assistant 預設值。與其他整合共用匯流排時，此值為整條連線的最低逾時。需 Home Assistant 2026.10 以上。",
+          "timeout": "等待溫控器回應的時間，逾時後重新詢問（最多 8 次）。與其他整合共用匯流排時，此值為整條連線的最低逾時。需 Home Assistant 2026.10 以上。",
           "message_delay": "對同一台溫控器連續請求之間的最短間隔，不會拖慢匯流排上的其他裝置。",
           "auto_sync_clock": "溫控器時鐘誤差超過 2 分鐘時，以 Home Assistant 的時間校正。定時與程式模式需要正確的時鐘。"
         }
@@ -171,6 +171,12 @@
   "exceptions": {
     "link_conflict": {
       "message": "此匯流排已被其他整合以不同的序列參數使用，請在各處使用相同的設定。{error}"
+    },
+    "not_accepted": {
+      "message": "溫控器 {address} 未接受暫存器 {register} 的值 {value}。設定溫度須介於 5–50 °C，且僅支援手動與定時模式。"
+    },
+    "write_failed": {
+      "message": "無法連線至溫控器 {address}：{error}"
     }
   },
   "issues": {

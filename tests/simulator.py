@@ -22,7 +22,17 @@ def build_rtu_frame(unit: int, pdu: bytes) -> bytes:
     body = bytes([unit]) + pdu
     return body + struct.pack("<H", crc16(body))
 
-WRITABLE = range(7)  # registers 40001-40007
+# Values the real PTB thermostat keeps for each writable register (40001-40007).
+# Anything else is acknowledged but ignored, as the hardware does.
+ACCEPTED = {
+    0: range(2),  # power
+    1: range(2),  # mode: 2 (schedule) is documented but not accepted
+    2: range(50, 501),  # set point 5.0-50.0 °C
+    3: range(2),  # lock
+    4: range(60),  # minute
+    5: range(24),  # hour
+    6: range(8),  # weekday, 0 = unset
+}
 
 
 class ThermostatBus:
@@ -35,6 +45,8 @@ class ThermostatBus:
         self.server: asyncio.Server | None = None
         self.port = 0
         self.connections = 0  # currently open client connections
+        self.drop_next = 0  # ignore this many upcoming requests, like the real thermostat
+        self.lose_writes = 0  # acknowledge but don't apply this many valid writes
 
     def add(self, unit: int, regs: list[int] | None = None) -> list[int]:
         """Add a thermostat: on, manual, 22.0 °C target, 21.5 °C room, heating."""
@@ -44,6 +56,9 @@ class ThermostatBus:
     def handle(self, unit: int, pdu: bytes) -> bytes | None:
         """Process a request PDU; None means the unit stays silent."""
         self.requests.append((unit, pdu))
+        if self.drop_next:
+            self.drop_next -= 1
+            return None
         regs = self.units.get(unit)
         if regs is None:
             return None
@@ -54,9 +69,12 @@ class ThermostatBus:
             data = regs[address : address + value]
             return bytes([3, 2 * value]) + struct.pack(f">{value}H", *data)
         if function == 6:
-            if address not in WRITABLE:
+            if address not in ACCEPTED:
                 return bytes([0x86, 2])
-            regs[address] = value
+            if self.lose_writes:
+                self.lose_writes -= 1
+            elif value in ACCEPTED[address]:
+                regs[address] = value
             return pdu
         return bytes([function | 0x80, 1])
 

@@ -37,6 +37,9 @@ CONF_AUTO_SYNC_CLOCK: Final = "auto_sync_clock"
 
 DEFAULT_SCAN_INTERVAL: Final = 30
 DEFAULT_MESSAGE_DELAY: Final = 50  # milliseconds
+# Thermostats answer within ~40 ms; a short timeout keeps a lost request from
+# stalling the shared bus. Applied from Home Assistant 2026.10.
+DEFAULT_TIMEOUT: Final = 1.0  # seconds
 DEFAULT_MIN_TEMP: Final = 5.0
 DEFAULT_MAX_TEMP: Final = 35.0
 DEFAULT_AUTO_SYNC_CLOCK: Final = False
@@ -60,6 +63,9 @@ MODE_MANUAL: Final = "manual"
 MODE_TIMER: Final = "timer"
 MODE_SCHEDULE: Final = "schedule"
 MODES: Final = [MODE_MANUAL, MODE_TIMER, MODE_SCHEDULE]  # index = register value
+# The PTB firmware tested accepts only manual and timer; mode 2 (schedule) is
+# documented but ignored, so it is only offered if a thermostat reports it.
+SETTABLE_MODES: Final = [MODE_MANUAL, MODE_TIMER]
 
 # Re-sync the thermostat clock when it drifts by more than this many minutes
 CLOCK_DRIFT_TOLERANCE: Final = 2
@@ -68,3 +74,13 @@ CLOCK_DRIFT_TOLERANCE: Final = 2
 MAX_MISSED_POLLS: Final = 2
 # ...and then only polled this often, so it doesn't stall the shared bus
 UNAVAILABLE_RETRY_INTERVAL: Final = timedelta(minutes=5)
+# Requests are sent this many times before giving up. The thermostats ignore
+# a large share of requests regardless of wiring (measured 30-70 %, on biased
+# and unbiased buses alike); 8 tries keep failures below 1 %.
+REQUEST_ATTEMPTS: Final = 8
+# A write the thermostat acknowledged but didn't keep is repeated this often
+WRITE_VERIFY_ATTEMPTS: Final = 3
+
+# Set point range the thermostats accept; other values are silently ignored
+SETPOINT_MIN: Final = 5.0
+SETPOINT_MAX: Final = 50.0

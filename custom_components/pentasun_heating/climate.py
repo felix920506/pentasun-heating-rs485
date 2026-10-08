@@ -21,6 +21,7 @@ from .const import (
     DEFAULT_MAX_TEMP,
     DEFAULT_MIN_TEMP,
     MODES,
+    SETTABLE_MODES,
     REG_MODE,
     REG_POWER,
     REG_SETPOINT,
@@ -49,7 +50,6 @@ class PentasunClimate(PentasunEntity, ClimateEntity):
     _attr_name = None
     _attr_translation_key = "thermostat"
     _attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
-    _attr_preset_modes = MODES
     _attr_supported_features = (
         ClimateEntityFeature.TARGET_TEMPERATURE
         | ClimateEntityFeature.PRESET_MODE
@@ -93,6 +93,16 @@ class PentasunClimate(PentasunEntity, ClimateEntity):
         return HVACAction.HEATING if state.heating else HVACAction.IDLE
 
     @property
+    def preset_modes(self) -> list[str]:
+        """Return the modes the thermostat accepts, plus its current one."""
+        # Read even while the thermostat is unavailable, so don't rely on state.
+        if self.address not in self.coordinator.data:
+            return SETTABLE_MODES
+        if (current := self.preset_mode) is not None and current not in SETTABLE_MODES:
+            return [*SETTABLE_MODES, current]
+        return SETTABLE_MODES
+
+    @property
     def preset_mode(self) -> str | None:
         """Return the operating mode (manual, timer, schedule)."""
         mode = self.state_data.mode
@@ -101,9 +111,7 @@ class PentasunClimate(PentasunEntity, ClimateEntity):
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Turn the thermostat on or off."""
         power = hvac_mode == HVACMode.HEAT
-        await self.coordinator.async_write(
-            self.address, REG_POWER, int(power), power=power
-        )
+        await self.coordinator.async_write(self.address, REG_POWER, int(power))
 
     async def async_turn_on(self) -> None:
         """Turn the thermostat on."""
@@ -120,11 +128,9 @@ class PentasunClimate(PentasunEntity, ClimateEntity):
         if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None:
             return
         raw = round(temperature * 2) * 5  # thermostat resolution is 0.5 °C
-        await self.coordinator.async_write(
-            self.address, REG_SETPOINT, raw, target_temperature=raw / 10
-        )
+        await self.coordinator.async_write(self.address, REG_SETPOINT, raw)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Change the operating mode."""
         mode = MODES.index(preset_mode)
-        await self.coordinator.async_write(self.address, REG_MODE, mode, mode=mode)
+        await self.coordinator.async_write(self.address, REG_MODE, mode)

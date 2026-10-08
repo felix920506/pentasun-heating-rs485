@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 import logging
-from typing import Any
 
 from modbus_connection import ModbusError, ModbusUnit
 
@@ -17,7 +16,12 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .bus import async_read_thermostat, build_params, configure_unit
+from .bus import (
+    async_read_thermostat,
+    async_write_register,
+    build_params,
+    configure_unit,
+)
 from .const import (
     CLOCK_DRIFT_TOLERANCE,
     CONF_ADDRESSES,
@@ -36,11 +40,28 @@ from .const import (
     REG_SETPOINT,
     REG_WEEKDAY,
     UNAVAILABLE_RETRY_INTERVAL,
+    WRITE_VERIFY_ATTEMPTS,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 type PentasunConfigEntry = ConfigEntry[PentasunCoordinator]
+
+
+class WriteNotAcceptedError(HomeAssistantError):
+    """The thermostat acknowledged a write but kept its old value."""
+
+    def __init__(self, address: int, register: int, value: int) -> None:
+        """Initialize the error."""
+        super().__init__(
+            translation_domain=DOMAIN,
+            translation_key="not_accepted",
+            translation_placeholders={
+                "address": str(address),
+                "register": str(40001 + register),
+                "value": str(value),
+            },
+        )
 
 MINUTES_PER_WEEK = 7 * 24 * 60
 
@@ -186,19 +207,28 @@ class PentasunCoordinator(DataUpdateCoordinator[dict[int, ThermostatState]]):
         _LOGGER.info("Synchronizing clock of thermostat %s", address)
         try:
             return await self._async_write_clock(address, state, now)
-        except ModbusError as err:
+        except (ModbusError, WriteNotAcceptedError) as err:
             _LOGGER.warning("Could not set clock of thermostat %s: %s", address, err)
             return state
 
     async def _async_write_clock(
         self, address: int, state: ThermostatState, now: datetime
     ) -> ThermostatState:
+        """Write weekday, hour and minute; return the state read back."""
         unit = self.units[address]
-        weekday = now.isoweekday()
-        await unit.write_register(REG_WEEKDAY, weekday)
-        await unit.write_register(REG_HOUR, now.hour)
-        await unit.write_register(REG_MINUTE, now.minute)
-        return replace(state, weekday=weekday, hour=now.hour, minute=now.minute)
+        clock = {REG_WEEKDAY: now.isoweekday(), REG_HOUR: now.hour, REG_MINUTE: now.minute}
+        for _ in range(WRITE_VERIFY_ATTEMPTS):
+            for register, value in clock.items():
+                await async_write_register(unit, register, value)
+            regs = await async_read_thermostat(unit)
+            # The thermostat's clock keeps running, so the minute may have ticked.
+            if (
+                regs[REG_WEEKDAY] == clock[REG_WEEKDAY]
+                and regs[REG_HOUR] == clock[REG_HOUR]
+                and (regs[REG_MINUTE] - clock[REG_MINUTE]) % 60 <= 1
+            ):
+                return ThermostatState.from_registers(regs)
+        raise WriteNotAcceptedError(address, REG_WEEKDAY, clock[REG_WEEKDAY])
 
     async def async_sync_clock(self, address: int) -> None:
         """Set the thermostat clock to Home Assistant's local time."""
@@ -207,21 +237,40 @@ class PentasunCoordinator(DataUpdateCoordinator[dict[int, ThermostatState]]):
             new_state = await self._async_write_clock(address, state, dt_util.now())
         except ModbusError as err:
             raise HomeAssistantError(
-                f"Failed to set clock of thermostat {address}: {err}"
+                translation_domain=DOMAIN,
+                translation_key="write_failed",
+                translation_placeholders={"address": str(address), "error": str(err)},
             ) from err
         self._last_clock_sync[address] = dt_util.now()
         self._publish(address, new_state)
 
-    async def async_write(self, address: int, register: int, value: int, **changes: Any) -> None:
-        """Write one register and update the cached state with ``changes``."""
-        state = self._require_state(address)
+    async def async_write(self, address: int, register: int, value: int) -> None:
+        """Write one register and check that the thermostat kept the value.
+
+        The thermostats acknowledge writes they then ignore, such as a set
+        point outside 5-50 °C or an operating mode they don't have, and very
+        occasionally drop a valid one. So the registers are read back, the
+        write is repeated if it didn't stick, and the state as read is shown.
+        """
+        self._require_state(address)
+        unit = self.units[address]
+        value &= 0xFFFF
         try:
-            await self.units[address].write_register(register, value & 0xFFFF)
+            for _ in range(WRITE_VERIFY_ATTEMPTS):
+                await async_write_register(unit, register, value)
+                regs = await async_read_thermostat(unit)
+                if regs[register] == value:
+                    break
+            else:
+                self._publish(address, ThermostatState.from_registers(regs))
+                raise WriteNotAcceptedError(address, register, value)
         except ModbusError as err:
             raise HomeAssistantError(
-                f"Failed to write to thermostat {address}: {err}"
+                translation_domain=DOMAIN,
+                translation_key="write_failed",
+                translation_placeholders={"address": str(address), "error": str(err)},
             ) from err
-        self._publish(address, replace(state, **changes))
+        self._publish(address, ThermostatState.from_registers(regs))
 
     def _require_state(self, address: int) -> ThermostatState:
         if self.data is None or (state := self.data.get(address)) is None:

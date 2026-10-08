@@ -8,15 +8,17 @@ serialized on one link instead of colliding on the wire.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 import logging
 from typing import Any
 
 from modbus_connection import (
     IllegalDataAddressError,
+    ModbusProtocolError,
     ModbusSerialParams,
     ModbusTcpParams,
+    ModbusTimeoutError,
     ModbusUnit,
 )
 
@@ -38,6 +40,7 @@ from .const import (
     DEFAULT_MESSAGE_DELAY,
     DEFAULT_PARITY,
     DEFAULT_STOPBITS,
+    DEFAULT_TIMEOUT,
     REG_HOUR,
     REG_LOCK,
     REG_MINUTE,
@@ -45,6 +48,7 @@ from .const import (
     REG_POWER,
     REG_WEEKDAY,
     REGISTER_COUNT,
+    REQUEST_ATTEMPTS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -89,33 +93,62 @@ def configure_unit(unit: ModbusUnit, options: Mapping[str, Any]) -> Callable[[],
     """Apply the timing options to one of our units; returns an undo callback.
 
     Message spacing only paces requests to this unit, so it never slows down
-    other devices on the bus. The timeout is a minimum for the whole link, so
-    it is only requested when the user set one.
+    other devices on the bus. The timeout is a minimum for the whole link:
+    another integration that asks for a longer one still gets it.
     """
     unit.set_message_spacing(
         options.get(CONF_MESSAGE_DELAY, DEFAULT_MESSAGE_DELAY) / 1000
     )
-    # require_timeout() arrived in modbus-connection 4.12 (Home Assistant
-    # 2026.10); before that every link uses the library's 10 second timeout.
-    timeout = options.get(CONF_TIMEOUT)
-    can_set_timeout = timeout is not None and hasattr(unit, "require_timeout")
-    if can_set_timeout:
-        unit.require_timeout(timeout)
+    undo_timeout = require_timeout(unit, options.get(CONF_TIMEOUT, DEFAULT_TIMEOUT))
 
     def undo() -> None:
         unit.set_message_spacing(0)
-        if can_set_timeout:
-            unit.require_timeout(None)
+        undo_timeout()
 
     return undo
+
+
+def require_timeout(unit: ModbusUnit, timeout: float) -> Callable[[], None]:
+    """Ask the link for a response timeout; returns an undo callback.
+
+    ``require_timeout()`` arrived in modbus-connection 4.12 (Home Assistant
+    2026.10); before that every link uses the library's 10 second timeout.
+    """
+    if not hasattr(unit, "require_timeout"):
+        return lambda: None
+    unit.require_timeout(timeout)
+    return lambda: unit.require_timeout(None)
+
+
+async def _async_request[T](unit: ModbusUnit, request: Callable[[], Awaitable[T]]) -> T:
+    """Send a request, repeating it when the answer is lost or garbled."""
+    attempt = 1
+    while True:
+        try:
+            return await request()
+        except (ModbusTimeoutError, ModbusProtocolError) as err:
+            # A link that is down won't come back by asking again.
+            if attempt >= REQUEST_ATTEMPTS or not unit.connected:
+                raise
+            _LOGGER.debug("Attempt %s/%s failed: %s", attempt, REQUEST_ATTEMPTS, err)
+            attempt += 1
 
 
 async def async_read_thermostat(unit: ModbusUnit) -> list[int]:
     """Read the register block, falling back for firmware without register 9."""
     try:
-        return await unit.read_holding_registers(0, REGISTER_COUNT)
+        return await _async_request(
+            unit, lambda: unit.read_holding_registers(0, REGISTER_COUNT)
+        )
     except IllegalDataAddressError:
-        return await unit.read_holding_registers(0, REGISTER_COUNT - 1)
+        return await _async_request(
+            unit, lambda: unit.read_holding_registers(0, REGISTER_COUNT - 1)
+        )
+
+
+async def async_write_register(unit: ModbusUnit, register: int, value: int) -> None:
+    """Write one register (function 0x06). Repeating it is harmless."""
+    await _async_request(unit, lambda: unit.write_register(register, value & 0xFFFF))
 
 
 def looks_like_thermostat(regs: list[int]) -> bool:

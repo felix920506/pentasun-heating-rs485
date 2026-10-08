@@ -48,15 +48,19 @@ from .const import (
     DEFAULT_PARITY,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_STOPBITS,
+    DEFAULT_TIMEOUT,
     DOMAIN,
     MAX_ADDRESS,
     MIN_ADDRESS,
+    SETPOINT_MAX,
+    SETPOINT_MIN,
 )
 from .bus import (
     async_get_bus_usage,
     async_read_thermostat,
     build_params,
     looks_like_thermostat,
+    require_timeout,
 )
 from .coordinator import PentasunConfigEntry
 
@@ -66,6 +70,7 @@ CONF_SKIP_CHECK = "skip_check"
 
 DEFAULT_OPTIONS: dict[str, Any] = {
     CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
+    CONF_TIMEOUT: DEFAULT_TIMEOUT,
     CONF_MESSAGE_DELAY: DEFAULT_MESSAGE_DELAY,
     CONF_MIN_TEMP: DEFAULT_MIN_TEMP,
     CONF_MAX_TEMP: DEFAULT_MAX_TEMP,
@@ -205,9 +210,10 @@ async def _async_probe(
     """Check the addresses on the bus; return an error key and placeholders.
 
     Requests go over the modbus integration's shared connection, so probing
-    a bus other integrations already use doesn't disturb them. No timing
-    settings are changed on these temporary units: those apply to the whole
-    shared link and would outlive the flow.
+    a bus other integrations already use doesn't disturb them. The addresses
+    are checked to be unused by other integrations first, so the timeout
+    requested for a probed unit can't clobber someone else's and is withdrawn
+    right after.
     """
     placeholders = dict.fromkeys(PROBE_PLACEHOLDERS, "")
     params = build_params(data)
@@ -233,6 +239,7 @@ async def _async_probe(
     for address in addresses:
         try:
             async with async_get_temporary_unit(hass, params, address) as unit:
+                undo_timeout = require_timeout(unit, DEFAULT_TIMEOUT)
                 try:
                     regs = await async_read_thermostat(unit)
                 except ModbusError as err:
@@ -241,6 +248,8 @@ async def _async_probe(
                         return "cannot_connect", placeholders
                     missing.append(address)
                     continue
+                finally:
+                    undo_timeout()
         except HomeAssistantError as err:
             # The port or host is in use with different serial settings.
             placeholders["error"] = str(err)
@@ -476,10 +485,10 @@ class PentasunOptionsFlow(OptionsFlowWithReload):
             {
                 vol.Required(CONF_ADDRESSES): str,
                 vol.Required(CONF_SCAN_INTERVAL): number(5, 3600, 1, "s"),
-                vol.Optional(CONF_TIMEOUT): number(0.2, 30, 0.1, "s"),
+                vol.Required(CONF_TIMEOUT): number(0.2, 30, 0.1, "s"),
                 vol.Required(CONF_MESSAGE_DELAY): number(0, 1000, 10, "ms"),
-                vol.Required(CONF_MIN_TEMP): number(0, 40, 0.5, "°C"),
-                vol.Required(CONF_MAX_TEMP): number(5, 60, 0.5, "°C"),
+                vol.Required(CONF_MIN_TEMP): number(SETPOINT_MIN, SETPOINT_MAX, 0.5, "°C"),
+                vol.Required(CONF_MAX_TEMP): number(SETPOINT_MIN, SETPOINT_MAX, 0.5, "°C"),
                 vol.Required(CONF_AUTO_SYNC_CLOCK): bool,
             }
         )

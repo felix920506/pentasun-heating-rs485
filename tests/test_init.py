@@ -37,6 +37,7 @@ from homeassistant.const import (
     STATE_UNAVAILABLE,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr, issue_registry as ir
 from homeassistant.util import dt as dt_util
@@ -52,6 +53,7 @@ from custom_components.pentasun_heating.const import (
     CONF_MIN_TEMP,
     CONF_PARITY,
     CONF_STOPBITS,
+    CONF_TIMEOUT,
     CONN_MODBUS_TCP,
     CONN_RTU_OVER_TCP,
     CONN_SERIAL,
@@ -87,6 +89,7 @@ def _entry(bus: ThermostatBus, addresses: list[int], **options) -> MockConfigEnt
         options={
             CONF_ADDRESSES: addresses,
             CONF_SCAN_INTERVAL: 30,
+            CONF_TIMEOUT: 0.05,
             CONF_MESSAGE_DELAY: 0,
             CONF_MIN_TEMP: 5.0,
             CONF_MAX_TEMP: 35.0,
@@ -370,6 +373,55 @@ async def test_entities(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
     assert entry.state is ConfigEntryState.NOT_LOADED
 
 
+async def test_lost_requests_are_repeated(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
+    """Requests the thermostat ignores are sent again, for reads and writes."""
+    regs = rtu_bus.add(1)
+    rtu_bus.drop_next = 3
+    entry = _entry(rtu_bus, [1])
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert hass.states.get(CLIMATE_1).state == HVACMode.HEAT
+    assert len(rtu_bus.requests) == 4
+
+    rtu_bus.drop_next = 2
+    await hass.services.async_call(
+        CLIMATE_DOMAIN, SERVICE_SET_TEMPERATURE,
+        {ATTR_ENTITY_ID: CLIMATE_1, ATTR_TEMPERATURE: 19}, blocking=True,
+    )
+    assert regs[2] == 190
+
+
+async def test_writes_are_verified(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
+    """A write that doesn't stick is repeated; one the thermostat refuses is reported."""
+    regs = rtu_bus.add(1)
+    entry = _entry(rtu_bus, [1], **{CONF_MAX_TEMP: 50.0})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    rtu_bus.lose_writes = 1
+    await hass.services.async_call(
+        CLIMATE_DOMAIN, SERVICE_SET_TEMPERATURE,
+        {ATTR_ENTITY_ID: CLIMATE_1, ATTR_TEMPERATURE: 23}, blocking=True,
+    )
+    assert regs[2] == 230
+
+    # Only manual and timer are offered; the thermostat ignores mode 2
+    state = hass.states.get(CLIMATE_1)
+    assert state.attributes["preset_modes"] == ["manual", "timer"]
+    rtu_bus.lose_writes = 3
+    with pytest.raises(HomeAssistantError) as err:
+        await hass.services.async_call(
+            CLIMATE_DOMAIN, SERVICE_SET_PRESET_MODE,
+            {ATTR_ENTITY_ID: CLIMATE_1, ATTR_PRESET_MODE: "timer"}, blocking=True,
+        )
+    assert err.value.translation_key == "not_accepted"
+    # The state shown is what the thermostat really has
+    assert hass.states.get(CLIMATE_1).attributes[ATTR_PRESET_MODE] == "manual"
+    assert hass.states.get(CLIMATE_1).attributes[ATTR_TEMPERATURE] == 23
+
+
 async def test_old_firmware_and_clock_sync(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
     """Firmware without register 40009 works; clocks get synced when enabled."""
     regs = rtu_bus.add(1, [1, 0, 220, 0, 0, 0, 0, 215])  # invalid clock (weekday 0)
@@ -405,6 +457,7 @@ async def test_not_ready_and_options(hass: HomeAssistant, rtu_bus: ThermostatBus
         {
             CONF_ADDRESSES: "1",
             CONF_SCAN_INTERVAL: 10,
+            CONF_TIMEOUT: 0.2,
             CONF_MESSAGE_DELAY: 0,
             CONF_MIN_TEMP: 10,
             CONF_MAX_TEMP: 30,
