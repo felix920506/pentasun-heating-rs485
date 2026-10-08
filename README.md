@@ -37,8 +37,24 @@ In gateway mode the serial server converts Modbus TCP to RTU itself. Set it up l
   has to wait longer than the gateway does. The integration uses 1.5 s for gateway
   connections, which suits a gateway timeout of 1000 ms. If your gateway waits
   longer, raise the *response timeout* in *Configure* (and in the scan form) to a bit
-  more than the gateway's. A lower gateway timeout (e.g. 300 ms, the thermostats
-  answer within about 60 ms) makes scanning and lost requests faster.
+  more than the gateway's.
+
+  **Speeding things up:** the 1000 ms many gateways use by default is far more than
+  these thermostats need: they answer within about 60 ms, and a thermostat that
+  ignores a request never answers it late. Each request a thermostat ignores, and
+  each empty address in a scan, holds up the bus for the full timeout. Shortening
+  it makes scans and retries several times faster:
+
+  1. In the gateway's settings, set the Modbus/RTU response timeout to about
+     **300 ms**.
+  2. In Home Assistant, set the *response timeout* to about **0.5 s**, both in
+     *Configure* on the integration entry and in the scan form when scanning.
+
+  Home Assistant's timeout must always stay above the gateway's. If it is shorter,
+  each new request reaches the gateway while it is still waiting and gets dropped,
+  and thermostats appear to stop answering. If that happens after lowering the
+  timeouts, raise Home Assistant's again. (Tested only with a 1000 ms gateway
+  timeout and 1.5 s in Home Assistant.)
 
 Tested with a serial server in gateway mode (gateway timeout 1000 ms) and 8
 thermostats. The scan found all 8 (addresses 1–32, count 8) in 2–4.5 minutes;
