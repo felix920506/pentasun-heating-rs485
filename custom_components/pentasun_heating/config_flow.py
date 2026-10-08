@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 import logging
 from typing import Any
 
-from modbus_connection import ModbusConnectionError, ModbusError
+from modbus_connection import ModbusConnectionError, ModbusError, ModbusUnit
 import voluptuous as vol
 
 from homeassistant.components import usb
@@ -18,7 +19,13 @@ from homeassistant.config_entries import (
     ConfigFlowResult,
     OptionsFlowWithReload,
 )
-from homeassistant.const import CONF_DEVICE, CONF_HOST, CONF_PORT, CONF_SCAN_INTERVAL
+from homeassistant.const import (
+    CONF_DEVICE,
+    CONF_HOST,
+    CONF_NAME,
+    CONF_PORT,
+    CONF_SCAN_INTERVAL,
+)
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import selector
@@ -32,6 +39,7 @@ from .const import (
     CONF_MAX_TEMP,
     CONF_MESSAGE_DELAY,
     CONF_MIN_TEMP,
+    CONF_NAMES,
     CONF_PARITY,
     CONF_STOPBITS,
     CONF_TIMEOUT,
@@ -53,6 +61,7 @@ from .const import (
     DEFAULT_TIMEOUT,
     DOMAIN,
     MAX_ADDRESS,
+    REG_POWER,
     MIN_ADDRESS,
     SETPOINT_MAX,
     SETPOINT_MIN,
@@ -62,6 +71,7 @@ from .bus import (
     async_get_bus_usage,
     async_read_thermostat,
     async_scan_bus,
+    async_write_verified,
     build_params,
     default_timeout,
     looks_like_thermostat,
@@ -75,6 +85,7 @@ CONF_SKIP_CHECK = "skip_check"
 CONF_SCAN_RANGE = "scan_range"
 CONF_SCAN_COUNT = "scan_count"
 CONF_SCAN_TIMEOUT = "scan_timeout"
+CONF_TOGGLE_AGAIN = "toggle_again"
 
 DEFAULT_OPTIONS: dict[str, Any] = {
     CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
@@ -275,6 +286,147 @@ async def _async_probe(
     return None, placeholders
 
 
+@asynccontextmanager
+async def _async_flow_unit(
+    hass: HomeAssistant, data: Mapping[str, Any], address: int
+) -> AsyncIterator[ModbusUnit]:
+    """Hold a unit for a flow step, with our response timeout."""
+    async with async_get_temporary_unit(hass, build_params(data), address) as unit:
+        undo_timeout = require_timeout(unit, default_timeout(data))
+        try:
+            yield unit
+        finally:
+            undo_timeout()
+
+
+class _IdentifySteps:
+    """Steps that switch each thermostat on or off in turn so it can be named.
+
+    The thermostats only know their bus address, so this is how to find out
+    which room each one is in. Every thermostat's power is restored before
+    moving on to the next, and when the flow is closed half way.
+    """
+
+    hass: Any
+    _identify_queue: list[int]
+    _identify_total: int = 0
+    _identify_names: dict[str, str]
+    _identify_original: bool | None = None
+    """The power state of the thermostat being identified, before toggling."""
+    _identify_toggled: bool = False
+
+    def _identify_data(self) -> Mapping[str, Any]:
+        """Return the connection data."""
+        raise NotImplementedError
+
+    def _identify_addresses(self) -> list[int]:
+        """Return the addresses to identify."""
+        raise NotImplementedError
+
+    async def _async_finish_naming(self, names: dict[str, str]) -> ConfigFlowResult:
+        """Save the names (possibly none) and finish the flow."""
+        raise NotImplementedError
+
+    async def async_step_name_thermostats(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Offer to identify and name the thermostats."""
+        return self.async_show_menu(
+            step_id="name_thermostats", menu_options=["identify", "finish"]
+        )
+
+    async def async_step_finish(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Finish without naming."""
+        return await self._async_finish_naming({})
+
+    async def async_step_identify(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Toggle one thermostat at a time and ask for its name."""
+        errors: dict[str, str] = {}
+        if user_input is None:
+            self._identify_queue = list(self._identify_addresses())
+            self._identify_total = len(self._identify_queue)
+            self._identify_names = {}
+            if not await self._async_identify_toggle():
+                errors["base"] = "identify_failed"
+        elif user_input.get(CONF_TOGGLE_AGAIN):
+            if not await self._async_identify_toggle():
+                errors["base"] = "identify_failed"
+        else:
+            address = self._identify_queue.pop(0)
+            await self._async_identify_restore(address)
+            if name := user_input.get(CONF_NAME, "").strip():
+                self._identify_names[str(address)] = name
+            if not self._identify_queue:
+                return await self._async_finish_naming(self._identify_names)
+            if not await self._async_identify_toggle():
+                errors["base"] = "identify_failed"
+
+        address = self._identify_queue[0]
+        schema = vol.Schema(
+            {
+                vol.Optional(CONF_NAME): str,
+                vol.Optional(CONF_TOGGLE_AGAIN, default=False): bool,
+            }
+        )
+        return self.async_show_form(
+            step_id="identify",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={
+                "address": str(address),
+                "index": str(self._identify_total - len(self._identify_queue) + 1),
+                "total": str(self._identify_total),
+            },
+        )
+
+    async def _async_identify_toggle(self) -> bool:
+        """Switch the current thermostat's power; returns False if that failed."""
+        address = self._identify_queue[0]
+        try:
+            async with _async_flow_unit(self.hass, self._identify_data(), address) as unit:
+                if self._identify_original is None:
+                    regs = await async_read_thermostat(unit)
+                    self._identify_original = bool(regs[REG_POWER])
+                power = self._identify_original if self._identify_toggled else (
+                    not self._identify_original
+                )
+                kept, _ = await async_write_verified(unit, REG_POWER, int(power))
+        except (ModbusError, HomeAssistantError) as err:
+            _LOGGER.debug("Cannot toggle thermostat %s: %s", address, err)
+            return False
+        if kept:
+            self._identify_toggled = not self._identify_toggled
+        return kept
+
+    async def _async_identify_restore(self, address: int) -> None:
+        """Put the thermostat's power back as it was."""
+        original, toggled = self._identify_original, self._identify_toggled
+        self._identify_original, self._identify_toggled = None, False
+        if original is None or not toggled:
+            return
+        try:
+            async with _async_flow_unit(self.hass, self._identify_data(), address) as unit:
+                await async_write_verified(unit, REG_POWER, int(original))
+        except (ModbusError, HomeAssistantError) as err:
+            _LOGGER.warning(
+                "Could not switch thermostat %s back %s: %s",
+                address, "on" if original else "off", err,
+            )
+
+    @callback
+    def async_remove(self) -> None:
+        """Restore the thermostat being identified when the flow is closed."""
+        if self._identify_toggled and self._identify_queue:
+            self.hass.async_create_background_task(
+                self._async_identify_restore(self._identify_queue[0]),
+                f"{DOMAIN} restore identified thermostat",
+            )
+
+
 class _ScanSteps:
     """Bus scan steps shared by the config flow and the options flow."""
 
@@ -405,7 +557,7 @@ class _ScanSteps:
         return {}
 
 
-class PentasunConfigFlow(_ScanSteps, ConfigFlow, domain=DOMAIN):
+class PentasunConfigFlow(_ScanSteps, _IdentifySteps, ConfigFlow, domain=DOMAIN):
     """Handle a config flow for a thermostat bus."""
 
     VERSION = 1
@@ -413,6 +565,7 @@ class PentasunConfigFlow(_ScanSteps, ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         """Initialize the flow."""
         self._data: dict[str, Any] = {}
+        self._options: dict[str, Any] = {}
 
     @staticmethod
     @callback
@@ -548,6 +701,19 @@ class PentasunConfigFlow(_ScanSteps, ConfigFlow, domain=DOMAIN):
     def _scan_target(self) -> tuple[Mapping[str, Any], str | None, list[int]]:
         return self._data, None, []
 
+    def _identify_data(self) -> Mapping[str, Any]:
+        return self._data
+
+    def _identify_addresses(self) -> list[int]:
+        return list(self._options[CONF_ADDRESSES])
+
+    async def _async_finish_naming(self, names: dict[str, str]) -> ConfigFlowResult:
+        return self.async_create_entry(
+            title=_title(self._data),
+            data=self._data,
+            options={**self._options, CONF_NAMES: names},
+        )
+
     async def async_step_thermostats(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -592,15 +758,12 @@ class PentasunConfigFlow(_ScanSteps, ConfigFlow, domain=DOMAIN):
                 if error:
                     errors["base"] = error
                 else:
-                    return self.async_create_entry(
-                        title=_title(self._data),
-                        data=self._data,
-                        options={
-                            **DEFAULT_OPTIONS,
-                            CONF_TIMEOUT: default_timeout(self._data),
-                            CONF_ADDRESSES: addresses,
-                        },
-                    )
+                    self._options = {
+                        **DEFAULT_OPTIONS,
+                        CONF_TIMEOUT: default_timeout(self._data),
+                        CONF_ADDRESSES: addresses,
+                    }
+                    return await self.async_step_name_thermostats()
 
         schema = vol.Schema(
             {
@@ -616,14 +779,33 @@ class PentasunConfigFlow(_ScanSteps, ConfigFlow, domain=DOMAIN):
         )
 
 
-class PentasunOptionsFlow(_ScanSteps, OptionsFlowWithReload):
+class PentasunOptionsFlow(_ScanSteps, _IdentifySteps, OptionsFlowWithReload):
     """Change thermostat addresses and polling settings, or scan for more."""
+
+    _options: dict[str, Any]
+    _new_addresses: list[int] | None = None
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Choose between the settings and a bus scan."""
-        return self.async_show_menu(step_id="init", menu_options=["settings", "scan"])
+        """Choose between the settings, a bus scan and naming."""
+        self._options = dict(self.config_entry.options)
+        return self.async_show_menu(
+            step_id="init", menu_options=["settings", "scan", "identify"]
+        )
+
+    def _identify_data(self) -> Mapping[str, Any]:
+        return self.config_entry.data
+
+    def _identify_addresses(self) -> list[int]:
+        if self._new_addresses is not None:
+            return self._new_addresses
+        return list(self._options[CONF_ADDRESSES])
+
+    async def _async_finish_naming(self, names: dict[str, str]) -> ConfigFlowResult:
+        return self.async_create_entry(
+            data={**self._options, CONF_NAMES: {**self._options.get(CONF_NAMES, {}), **names}}
+        )
 
     def _scan_target(self) -> tuple[Mapping[str, Any], str | None, list[int]]:
         entry = self.config_entry
@@ -655,9 +837,12 @@ class PentasunOptionsFlow(_ScanSteps, OptionsFlowWithReload):
                 if error:
                     errors[CONF_ADDRESSES] = error
                 else:
-                    return self.async_create_entry(
-                        data={**entry.options, CONF_ADDRESSES: addresses}
-                    )
+                    known = set(entry.options[CONF_ADDRESSES])
+                    self._options = {**entry.options, CONF_ADDRESSES: addresses}
+                    self._new_addresses = [a for a in addresses if a not in known]
+                    if not self._new_addresses:
+                        return await self._async_finish_naming({})
+                    return await self.async_step_name_thermostats()
         found = self._scan_result.thermostats if self._scan_result else []
         default = format_addresses(sorted({*entry.options[CONF_ADDRESSES], *found}))
         schema = vol.Schema({vol.Required(CONF_ADDRESSES, default=default): str})
@@ -692,6 +877,7 @@ class PentasunOptionsFlow(_ScanSteps, OptionsFlowWithReload):
                 else:
                     return self.async_create_entry(
                         data={
+                            **entry.options,
                             **user_input,
                             CONF_ADDRESSES: addresses,
                             CONF_SCAN_INTERVAL: int(user_input[CONF_SCAN_INTERVAL]),

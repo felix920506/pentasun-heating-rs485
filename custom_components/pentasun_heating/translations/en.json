@@ -115,6 +115,26 @@
           "addresses": "Separate with commas; ranges are allowed, e.g. 1, 2, 5-8.",
           "skip_check": "Use this when some thermostats are not powered yet."
         }
+      },
+      "name_thermostats": {
+        "title": "Name the thermostats?",
+        "description": "The thermostats only know their bus address. To find out which is which, Home Assistant can switch each one on or off in turn while you watch the displays, and you name it after the room it's in. Each thermostat is switched back afterwards.",
+        "menu_options": {
+          "identify": "Identify and name the thermostats",
+          "finish": "Finish without names"
+        }
+      },
+      "identify": {
+        "title": "Thermostat {index} of {total}",
+        "description": "The thermostat at address {address} has just been switched on or off: find the one whose display changed. It is switched back when you continue.",
+        "data": {
+          "name": "Name",
+          "toggle_again": "Switch it again"
+        },
+        "data_description": {
+          "name": "For example the room it's in. Leave empty to keep \"Thermostat {address}\".",
+          "toggle_again": "Tick and submit to switch it once more, if you missed which display changed."
+        }
       }
     },
     "error": {
@@ -125,7 +145,8 @@
       "not_thermostat": "The device(s) at {addresses} answered, but don't look like PTB thermostats. Another kind of device on this bus may use that address.",
       "address_in_use": "Address(es) {addresses} are already used on this bus by {users}. Every device on a bus needs its own address.",
       "link_conflict": "This port or host is already used by another integration with different serial settings: {error}",
-      "missing_thermostats": "Only {found_count} of the {expected} thermostats answered, even after asking the silent addresses for another minute. Check that:\n- no two thermostats share an address (garbled replies, which this causes, came from: {garbled});\n- the wiring is reliable: A/B not swapped, bias and 120 Ω termination present, no loose terminals;\n- with a Modbus TCP gateway: the response timeout is longer than the gateway's own, and request caching or automatic polling in the gateway is turned off;\n- every thermostat is powered and its address (option 12) is within the scanned range.\nAdd any missing addresses below, or go back and scan again."
+      "missing_thermostats": "Only {found_count} of the {expected} thermostats answered, even after asking the silent addresses for another minute. Check that:\n- no two thermostats share an address (garbled replies, which this causes, came from: {garbled});\n- the wiring is reliable: A/B not swapped, bias and 120 Ω termination present, no loose terminals;\n- with a Modbus TCP gateway: the response timeout is longer than the gateway's own, and request caching or automatic polling in the gateway is turned off;\n- every thermostat is powered and its address (option 12) is within the scanned range.\nAdd any missing addresses below, or go back and scan again.",
+      "identify_failed": "Could not switch this thermostat (it didn't answer or ignored the change). You can still name it, or tick \"Switch it again\" to retry."
     },
     "abort": {
       "already_configured": "This bus is already configured.",
@@ -159,7 +180,8 @@
         "title": "Thermostat bus options",
         "menu_options": {
           "settings": "Addresses and polling settings",
-          "scan": "Scan for new thermostats"
+          "scan": "Scan for new thermostats",
+          "identify": "Identify and name thermostats"
         }
       },
       "scan": {
@@ -185,6 +207,26 @@
         "data_description": {
           "addresses": "Separate with commas; ranges are allowed, e.g. 1, 2, 5-8."
         }
+      },
+      "name_thermostats": {
+        "title": "Name the thermostats?",
+        "description": "The thermostats only know their bus address. To find out which is which, Home Assistant can switch each one on or off in turn while you watch the displays, and you name it after the room it's in. Each thermostat is switched back afterwards.",
+        "menu_options": {
+          "identify": "Identify and name the thermostats",
+          "finish": "Finish without names"
+        }
+      },
+      "identify": {
+        "title": "Thermostat {index} of {total}",
+        "description": "The thermostat at address {address} has just been switched on or off: find the one whose display changed. It is switched back when you continue.",
+        "data": {
+          "name": "Name",
+          "toggle_again": "Switch it again"
+        },
+        "data_description": {
+          "name": "For example the room it's in. Leave empty to keep \"Thermostat {address}\".",
+          "toggle_again": "Tick and submit to switch it once more, if you missed which display changed."
+        }
       }
     },
     "error": {
@@ -193,7 +235,8 @@
       "address_in_use": "Address(es) {addresses} are already used on this bus by {users}. Every device on a bus needs its own address.",
       "cannot_connect": "Failed to connect to the bus. Check the port or host and port.",
       "link_conflict": "This port or host is already used by another integration with different serial settings: {error}",
-      "missing_thermostats": "Only {found_count} of the {expected} thermostats answered, even after asking the silent addresses for another minute. Check that:\n- no two thermostats share an address (garbled replies, which this causes, came from: {garbled});\n- the wiring is reliable: A/B not swapped, bias and 120 Ω termination present, no loose terminals;\n- with a Modbus TCP gateway: the response timeout is longer than the gateway's own, and request caching or automatic polling in the gateway is turned off;\n- every thermostat is powered and its address (option 12) is within the scanned range.\nAdd any missing addresses below, or go back and scan again."
+      "missing_thermostats": "Only {found_count} of the {expected} thermostats answered, even after asking the silent addresses for another minute. Check that:\n- no two thermostats share an address (garbled replies, which this causes, came from: {garbled});\n- the wiring is reliable: A/B not swapped, bias and 120 Ω termination present, no loose terminals;\n- with a Modbus TCP gateway: the response timeout is longer than the gateway's own, and request caching or automatic polling in the gateway is turned off;\n- every thermostat is powered and its address (option 12) is within the scanned range.\nAdd any missing addresses below, or go back and scan again.",
+      "identify_failed": "Could not switch this thermostat (it didn't answer or ignored the change). You can still name it, or tick \"Switch it again\" to retry."
     },
     "progress": {
       "scan": "Scanning addresses {range} for thermostats. This can take a few minutes."

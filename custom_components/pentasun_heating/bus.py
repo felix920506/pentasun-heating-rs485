@@ -59,6 +59,7 @@ from .const import (
     SCAN_MISSING_TIME,
     SCAN_ROUNDS,
     SCAN_TIMEOUT,
+    WRITE_VERIFY_ATTEMPTS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -181,6 +182,24 @@ async def async_read_thermostat(unit: ModbusUnit) -> list[int]:
 async def async_write_register(unit: ModbusUnit, register: int, value: int) -> None:
     """Write one register (function 0x06). Repeating it is harmless."""
     await _async_request(unit, lambda: unit.write_register(register, value & 0xFFFF))
+
+
+async def async_write_verified(
+    unit: ModbusUnit, register: int, value: int
+) -> tuple[bool, list[int]]:
+    """Write one register and read it back; returns (kept, registers).
+
+    The thermostats acknowledge writes they then ignore, such as a set point
+    outside 5-50 °C or an operating mode they don't have, and very
+    occasionally drop a valid one, so the write is repeated if it didn't stick.
+    """
+    value &= 0xFFFF
+    for _ in range(WRITE_VERIFY_ATTEMPTS):
+        await async_write_register(unit, register, value)
+        regs = await async_read_thermostat(unit)
+        if regs[register] == value:
+            return True, regs
+    return False, regs
 
 
 def looks_like_thermostat(regs: list[int]) -> bool:

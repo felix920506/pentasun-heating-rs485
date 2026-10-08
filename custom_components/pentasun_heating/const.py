@@ -87,6 +87,11 @@ REQUEST_BURST_PAUSES: Final = (2.0, 5.0)  # seconds before the 2nd and 3rd burst
 # A write the thermostat acknowledged but didn't keep is repeated this often
 WRITE_VERIFY_ATTEMPTS: Final = 3
 
+# Names given to the thermostats while identifying them, keyed by address.
+CONF_NAMES: Final = "names"
+# How long the identify button keeps a thermostat's power switched.
+IDENTIFY_TIME: Final = 10  # seconds
+
 # Set point range the thermostats accept; other values are silently ignored
 SETPOINT_MIN: Final = 5.0
 SETPOINT_MAX: Final = 50.0

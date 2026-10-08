@@ -156,6 +156,7 @@ async def test_config_flow(hass: HomeAssistant, mbap_bus: ThermostatBus) -> None
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_ADDRESSES: "1-2"}
     )
+    result = await _skip_naming(hass.config_entries.flow, result)
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"] == {
         CONF_CONNECTION_TYPE: CONN_MODBUS_TCP, CONF_HOST: "127.0.0.1", CONF_PORT: mbap_bus.port,
@@ -188,6 +189,7 @@ async def test_serial_flow(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_ADDRESSES: "1"}
     )
+    result = await _skip_naming(hass.config_entries.flow, result)
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_BAUDRATE] == 115200
     await hass.async_block_till_done()
@@ -535,6 +537,16 @@ async def test_reconfigure(hass: HomeAssistant, rtu_bus: ThermostatBus, mbap_bus
     assert hass.states.get(CLIMATE_1).state == HVACMode.HEAT
 
 
+async def _skip_naming(flow_manager, result: dict) -> dict:
+    """Finish a flow at the offer to identify and name the thermostats."""
+    if result["type"] is FlowResultType.MENU and result["step_id"] == "name_thermostats":
+        assert result["menu_options"] == ["identify", "finish"]
+        result = await flow_manager.async_configure(
+            result["flow_id"], {"next_step_id": "finish"}
+        )
+    return result
+
+
 async def _finish_scan(flow_manager, result: dict) -> dict:
     """Wait for the background scan and return the step after the progress bar."""
     assert result["type"] is FlowResultType.SHOW_PROGRESS
@@ -584,6 +596,7 @@ async def test_scan_flow(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_ADDRESSES: "3, 7"}
     )
+    result = await _skip_naming(hass.config_entries.flow, result)
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["options"][CONF_ADDRESSES] == [3, 7]
 
@@ -665,6 +678,7 @@ async def test_scan_warns_about_missing(hass: HomeAssistant, rtu_bus: Thermostat
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_ADDRESSES: "1"}
     )
+    result = await _skip_naming(hass.config_entries.flow, result)
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
 
@@ -693,6 +707,7 @@ async def test_scan_through_gateway(hass: HomeAssistant, mbap_bus: ThermostatBus
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], {CONF_ADDRESSES: "2, 6"}
         )
+    result = await _skip_naming(hass.config_entries.flow, result)
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["options"][CONF_TIMEOUT] == 0.3  # longer default for gateways
 
@@ -748,8 +763,158 @@ async def test_options_scan_adds_thermostats(hass: HomeAssistant, rtu_bus: Therm
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {CONF_ADDRESSES: "3, 7"}
     )
+    result = await _skip_naming(hass.config_entries.options, result)
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     assert entry.options[CONF_ADDRESSES] == [3, 7]
     assert entry.options[CONF_SCAN_INTERVAL] == 30  # other options kept
     assert hass.states.get("climate.thermostat_7").state == HVACMode.HEAT
+
+
+async def test_identify_and_name(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
+    """Each thermostat is switched in turn to be named, then switched back."""
+    first = rtu_bus.add(1)  # on
+    second = rtu_bus.add(2, [0, 0, 220, 0, 30, 12, 3, 215, 0])  # off
+    result = await _start_flow(
+        hass, CONN_RTU_OVER_TCP, {CONF_HOST: "127.0.0.1", CONF_PORT: rtu_bus.port}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_ADDRESSES: "1, 2"}
+    )
+    assert result["type"] is FlowResultType.MENU
+    assert result["step_id"] == "name_thermostats"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "identify"}
+    )
+    assert result["step_id"] == "identify"
+    assert result["description_placeholders"] == {"address": "1", "index": "1", "total": "2"}
+    assert first[0] == 0 and second[0] == 0  # only the first one is switched
+
+    # Missed it: switch again, and again
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"toggle_again": True}
+    )
+    assert first[0] == 1
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"toggle_again": True}
+    )
+    assert first[0] == 0
+    assert result["errors"] == {}
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"name": " Living room "}
+    )
+    assert first[0] == 1  # restored
+    assert second[0] == 1  # now the second one is switched
+    assert result["description_placeholders"]["address"] == "2"
+
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert second[0] == 0  # restored
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["options"]["names"] == {"1": "Living room"}
+    await hass.async_block_till_done()
+
+    devices = dr.async_get(hass)
+    entry_id = result["result"].entry_id
+    names = {
+        next(iter(device.identifiers))[1]: device.name
+        for device in dr.async_entries_for_config_entry(devices, entry_id)
+    }
+    assert names == {f"{entry_id}_1": "Living room", f"{entry_id}_2": "Thermostat 2"}
+
+
+async def test_identify_restores_when_closed(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
+    """Closing the flow while a thermostat is switched puts it back."""
+    regs = rtu_bus.add(1)
+    result = await _start_flow(
+        hass, CONN_RTU_OVER_TCP, {CONF_HOST: "127.0.0.1", CONF_PORT: rtu_bus.port}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_ADDRESSES: "1"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "identify"}
+    )
+    assert regs[0] == 0
+    hass.config_entries.flow.async_abort(result["flow_id"])
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert regs[0] == 1
+
+
+async def test_identify_failure_still_allows_naming(
+    hass: HomeAssistant, rtu_bus: ThermostatBus
+) -> None:
+    """A thermostat that ignores the switch can still be named."""
+    rtu_bus.add(1)
+    result = await _start_flow(
+        hass, CONN_RTU_OVER_TCP, {CONF_HOST: "127.0.0.1", CONF_PORT: rtu_bus.port}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_ADDRESSES: "1"}
+    )
+    rtu_bus.lose_writes = 10
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "identify"}
+    )
+    assert result["errors"] == {"base": "identify_failed"}
+    rtu_bus.lose_writes = 0
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"name": "Bathroom"}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["options"]["names"] == {"1": "Bathroom"}
+
+
+async def test_identify_button_and_options_naming(
+    hass: HomeAssistant, rtu_bus: ThermostatBus
+) -> None:
+    """The identify button switches the power briefly; names can be set later."""
+    regs = rtu_bus.add(1)
+    rtu_bus.add(2)
+    entry = _entry(rtu_bus, [1, 2])
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    requests = len(rtu_bus.requests)
+    with patch("custom_components.pentasun_heating.coordinator.IDENTIFY_TIME", 0):
+        await hass.services.async_call(
+            "button", "press", {ATTR_ENTITY_ID: "button.thermostat_1_identify"}, blocking=True
+        )
+    writes = [pdu for unit, pdu in rtu_bus.requests[requests:] if unit == 1 and pdu[0] == 6]
+    assert writes[0] == bytes([6, 0, 0, 0, 0])  # switched off ...
+    assert writes[-1] == bytes([6, 0, 0, 0, 1])  # ... and back on
+    assert regs[0] == 1
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["menu_options"] == ["settings", "scan", "identify"]
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "identify"}
+    )
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"name": "Kitchen"}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert entry.options["names"] == {"2": "Kitchen"}
+    assert entry.options[CONF_SCAN_INTERVAL] == 30
+    devices = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
+    assert sorted(device.name for device in devices) == ["Kitchen", "Thermostat 1"]
+
+    # Saving the settings keeps the names
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "settings"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_ADDRESSES: "1, 2", CONF_SCAN_INTERVAL: 30, CONF_TIMEOUT: 0.2,
+            CONF_MESSAGE_DELAY: 0, CONF_MIN_TEMP: 5.0, CONF_MAX_TEMP: 35.0,
+            CONF_AUTO_SYNC_CLOCK: False,
+        },
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert entry.options["names"] == {"2": "Kitchen"}

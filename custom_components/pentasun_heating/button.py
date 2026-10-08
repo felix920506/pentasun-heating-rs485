@@ -1,8 +1,8 @@
-"""Clock synchronization button for Pentasun thermostats."""
+"""Buttons for Pentasun thermostats: clock sync and identify."""
 
 from __future__ import annotations
 
-from homeassistant.components.button import ButtonEntity
+from homeassistant.components.button import ButtonDeviceClass, ButtonEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -21,7 +21,12 @@ async def async_setup_entry(
     """Set up the buttons."""
     coordinator = entry.runtime_data
     async_add_entities(
-        PentasunSyncClock(coordinator, address) for address in coordinator.addresses
+        entity
+        for address in coordinator.addresses
+        for entity in (
+            PentasunSyncClock(coordinator, address),
+            PentasunIdentify(coordinator, address),
+        )
     )
 
 
@@ -38,3 +43,18 @@ class PentasunSyncClock(PentasunEntity, ButtonEntity):
     async def async_press(self) -> None:
         """Write the current time to the thermostat."""
         await self.coordinator.async_sync_clock(self.address)
+
+
+class PentasunIdentify(PentasunEntity, ButtonEntity):
+    """Switches the thermostat on or off for a few seconds to find it."""
+
+    _attr_device_class = ButtonDeviceClass.IDENTIFY
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: PentasunCoordinator, address: int) -> None:
+        """Initialize the button."""
+        super().__init__(coordinator, address, "identify")
+
+    async def async_press(self) -> None:
+        """Toggle the power, then restore it."""
+        await self.coordinator.async_identify(self.address)

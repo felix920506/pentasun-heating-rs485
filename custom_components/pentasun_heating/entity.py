@@ -5,7 +5,7 @@ from __future__ import annotations
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, MANUFACTURER, MODEL
+from .const import CONF_NAMES, DOMAIN, MANUFACTURER, MODEL
 from .coordinator import PentasunCoordinator, ThermostatState
 
 
@@ -20,11 +20,13 @@ class PentasunEntity(CoordinatorEntity[PentasunCoordinator]):
         """Initialize the entity."""
         super().__init__(coordinator)
         self.address = address
-        entry_id = coordinator.config_entry.entry_id
+        entry = coordinator.config_entry
+        entry_id = entry.entry_id
+        names = entry.options.get(CONF_NAMES, {})
         self._attr_unique_id = f"{entry_id}_{address}_{key}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{entry_id}_{address}")},
-            name=f"Thermostat {address}",
+            name=names.get(str(address)) or f"Thermostat {address}",
             manufacturer=MANUFACTURER,
             model=MODEL,
             serial_number=f"Modbus address {address}",

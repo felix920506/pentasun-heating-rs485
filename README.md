@@ -93,6 +93,23 @@ list, e.g. `1, 2, 5-8`.
 To add thermostats later, use *Configure → Scan for new thermostats* on the
 integration entry.
 
+### Telling the thermostats apart
+
+The thermostats only know their bus address. So that you don't have to open the
+settings of every thermostat to find out which room it's in, setup ends by offering
+to **identify and name the thermostats**. Home Assistant switches one thermostat at a
+time on (or off, if it was on), so its display lights up (or goes dark). You type a
+name such as the room, and the thermostat is switched back before the next one.
+Tick *Switch it again* if you missed which display changed. The names become the
+device names, so they are already filled in when Home Assistant asks you to assign
+areas. If you close the dialog half way, the thermostat being shown is switched back.
+
+To do this later, use *Configure → Identify and name thermostats*, or press a
+thermostat's **Identify** button. After *Scan for new thermostats*, only the new
+ones are shown.
+
+### How the scan works
+
 The scan asks every address in the chosen range (default 1–32) once per round, for
 6 rounds, with a short 0.25 s timeout. The thermostats ignore about half of all
 requests, so this finds a thermostat about 98 % of the time; the result is shown
@@ -128,6 +145,7 @@ over the shared connection, so other integrations keep working during the scan.
 | Heating binary sensor | 40009 | On while the thermostat calls for heat |
 | Child lock switch | 40004 | Locks the keypad |
 | Sync clock button | 40005-40007 | Sets the thermostat clock to Home Assistant's local time |
+| Identify button | 40001 | Switches the thermostat on (or off) for 10 seconds, then back, so you can see which one it is |
 | Thermostat clock sensor | 40005-40007 | Diagnostic, disabled by default |
 
 ## Options
