@@ -15,10 +15,35 @@ with other Modbus devices (see below).
 | USB / RS485 adapter | RS485 dongle on the Home Assistant host | Pick the `/dev/serial/by-id/...` path if offered |
 | Serial device server (RFC 2217) | USR-TCP232, Moxa NPort, ser2net etc. in RFC 2217 / "Telnet COM port" mode | Home Assistant sets baud rate/parity on the server |
 | Serial device server (raw TCP socket) | Elfin EW11, USR, ser2net `raw` etc. in TCP server mode | Set 9600 8N1 on the server's serial side; RTU frames pass through unchanged |
-| Modbus TCP gateway | Server in "Modbus TCP to RTU" gateway mode | Usually port 502; the thermostat address is the unit ID |
+| Modbus TCP gateway | Server in "Modbus TCP to RTU" gateway mode | Usually port 502; the thermostat address is the unit ID. See [Modbus TCP gateways](#modbus-tcp-gateways) |
 
 Default serial settings for the thermostats: **9600 baud, 8 data bits, no parity, 1 stop bit**.
 Wire A(+) and B(-) to the thermostats' A/B terminals.
+
+### Modbus TCP gateways
+
+In gateway mode the serial server converts Modbus TCP to RTU itself. Set it up like this:
+
+* **Serial side:** 9600 baud, 8N1, as for the thermostats.
+* **Turn off caching and automatic polling.** Some gateways can poll the devices
+  themselves and answer requests from a cache, or answer a repeated request with the
+  stored reply. Turn these features off explicitly ("Modbus polling", "storage",
+  "cache" or similar in the gateway settings). A cached reply hides a thermostat that
+  stopped answering, shows stale values after a change, and makes the integration's
+  check that each write took effect see the old value. During a scan it can also
+  report devices that aren't there.
+* **Response timeout:** the gateway waits for each thermostat's reply on the RS485
+  side and drops any request that arrives in the meantime. Home Assistant therefore
+  has to wait longer than the gateway does. The integration uses 1.5 s for gateway
+  connections, which suits a gateway timeout of 1000 ms. If your gateway waits
+  longer, raise the *response timeout* in *Configure* (and in the scan form) to a bit
+  more than the gateway's. A lower gateway timeout (e.g. 300 ms, the thermostats
+  answer within about 60 ms) makes scanning and lost requests faster.
+
+Tested with a serial server in gateway mode (gateway timeout 1000 ms) and 8
+thermostats. The scan found all 8 (addresses 1–32, count 8) in 2–4.5 minutes;
+with the 0.25 s scan timeout used for raw TCP, it found only 5–6 of them. Polling
+and writes behaved like the raw TCP connection.
 
 ## Installation
 
@@ -48,7 +73,9 @@ The scan asks every address in the chosen range (default 1–32) once per round,
 requests, so this finds a thermostat about 98 % of the time; the result is shown
 before anything is saved, so you can add one the scan missed. Scanning 1–32 takes
 about a minute; on a real bus with one thermostat it found it in each of 3 runs
-(48 s each).
+(48 s each). Through a Modbus TCP gateway each silent address costs the longer
+gateway timeout (1.5 s by default), so a scan takes several minutes; scan a
+narrower range if you know where the addresses are.
 
 If you enter **how many thermostats** there are (or, when scanning from
 *Configure*, how many are new), the scan stops as soon as it has found them all.

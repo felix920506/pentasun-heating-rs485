@@ -42,6 +42,7 @@ from .const import (
     CONN_RTU_OVER_TCP,
     CONN_SERIAL,
     DEFAULT_BAUDRATE,
+    DEFAULT_GATEWAY_TIMEOUT,
     DEFAULT_MESSAGE_DELAY,
     DEFAULT_PARITY,
     DEFAULT_STOPBITS,
@@ -96,6 +97,18 @@ def build_params(data: Mapping[str, Any]) -> ModbusParams:
         parity=data.get(CONF_PARITY, DEFAULT_PARITY),
         stopbits=data.get(CONF_STOPBITS, DEFAULT_STOPBITS),
     )
+
+
+def default_timeout(data: Mapping[str, Any]) -> float:
+    """Return the default response timeout for a connection.
+
+    A Modbus TCP gateway forwards one request at a time and drops requests that
+    arrive while it still waits for a reply on the RS485 side, so the timeout
+    must be longer than the gateway's own.
+    """
+    if data[CONF_CONNECTION_TYPE] == CONN_MODBUS_TCP:
+        return DEFAULT_GATEWAY_TIMEOUT
+    return DEFAULT_TIMEOUT
 
 
 def configure_unit(unit: ModbusUnit, options: Mapping[str, Any]) -> Callable[[], None]:
@@ -286,6 +299,7 @@ async def async_scan_bus(
     *,
     exclude_entry_id: str | None = None,
     expected: int | None = None,
+    timeout: float | None = None,
     on_progress: Callable[[float], None] | None = None,
 ) -> ScanResult:
     """Look for thermostats on the bus.
@@ -299,6 +313,9 @@ async def async_scan_bus(
     With ``expected`` set, the scan stops once that many thermostats
     answered. If fewer did after the regular rounds, the silent addresses
     are asked for up to ``SCAN_MISSING_TIME`` seconds more.
+
+    ``timeout`` replaces the short ``SCAN_TIMEOUT``; a Modbus TCP gateway
+    needs one longer than its own.
 
     Raises ``ModbusConnectionError`` if the bus can't be reached and
     ``HomeAssistantError`` if the link is in use with other settings.
@@ -333,7 +350,7 @@ async def async_scan_bus(
             )
             # Withdrawn before the unit is released; nobody else uses these
             # addresses, so the requirement can't clobber another integration's.
-            stack.callback(require_timeout(unit, SCAN_TIMEOUT))
+            stack.callback(require_timeout(unit, timeout or SCAN_TIMEOUT))
             units[address] = unit
 
         scan_round = 0

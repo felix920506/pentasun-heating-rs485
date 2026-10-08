@@ -63,6 +63,7 @@ from .bus import (
     async_read_thermostat,
     async_scan_bus,
     build_params,
+    default_timeout,
     looks_like_thermostat,
     require_timeout,
     scan_supported,
@@ -74,6 +75,7 @@ _LOGGER = logging.getLogger(__name__)
 CONF_SKIP_CHECK = "skip_check"
 CONF_SCAN_RANGE = "scan_range"
 CONF_SCAN_COUNT = "scan_count"
+CONF_SCAN_TIMEOUT = "scan_timeout"
 
 DEFAULT_OPTIONS: dict[str, Any] = {
     CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
@@ -246,7 +248,7 @@ async def _async_probe(
     for address in addresses:
         try:
             async with async_get_temporary_unit(hass, params, address) as unit:
-                undo_timeout = require_timeout(unit, DEFAULT_TIMEOUT)
+                undo_timeout = require_timeout(unit, default_timeout(data))
                 try:
                     regs = await async_read_thermostat(unit)
                 except ModbusError as err:
@@ -281,6 +283,7 @@ class _ScanSteps:
     _scan_task: asyncio.Task[ScanResult] | None = None
     _scan_range: list[int]
     _scan_count: int | None = None
+    _scan_timeout: float | None = None
     _scan_error: str | None = None
     _scan_error_detail: str = ""
     _scan_result: ScanResult | None = None
@@ -288,6 +291,10 @@ class _ScanSteps:
     def _scan_target(self) -> tuple[Mapping[str, Any], str | None, list[int]]:
         """Return the connection data, own entry id and already known addresses."""
         raise NotImplementedError
+
+    def _scan_default_timeout(self) -> float:
+        """Return the suggested scan timeout for a Modbus TCP gateway."""
+        return default_timeout(self._scan_target()[0])
 
     async def async_step_scan(
         self, user_input: dict[str, Any] | None = None
@@ -304,6 +311,7 @@ class _ScanSteps:
             else:
                 count = user_input.get(CONF_SCAN_COUNT)
                 self._scan_count = int(count) if count else None
+                self._scan_timeout = user_input.get(CONF_SCAN_TIMEOUT)
                 return await self.async_step_scan_progress()
         schema = vol.Schema(
             {
@@ -315,6 +323,22 @@ class _ScanSteps:
                 ),
             }
         )
+        if self._scan_target()[0][CONF_CONNECTION_TYPE] == CONN_MODBUS_TCP:
+            schema = schema.extend(
+                {
+                    vol.Required(
+                        CONF_SCAN_TIMEOUT, default=self._scan_default_timeout()
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=0.2,
+                            max=30,
+                            step=0.1,
+                            unit_of_measurement="s",
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    )
+                }
+            )
         return self.async_show_form(
             step_id="scan",
             data_schema=self.add_suggested_values_to_schema(schema, user_input),
@@ -336,6 +360,7 @@ class _ScanSteps:
                     addresses,
                     exclude_entry_id=exclude_entry_id,
                     expected=self._scan_count,
+                    timeout=self._scan_timeout,
                     on_progress=self.async_update_progress,
                 ),
                 f"{DOMAIN} bus scan",
@@ -489,11 +514,17 @@ class PentasunConfigFlow(_ScanSteps, ConfigFlow, domain=DOMAIN):
                 all_missing = placeholders["addresses"] == format_addresses(addresses)
                 error = "no_devices" if all_missing else None
             if not error:
+                # Switching to a gateway needs a timeout longer than the gateway's.
+                timeout = max(
+                    entry.options.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
+                    default_timeout(self._data),
+                )
                 return self.async_update_reload_and_abort(
                     entry,
                     unique_id=self.unique_id,
                     title=_title(self._data),
                     data=self._data,
+                    options={**entry.options, CONF_TIMEOUT: timeout},
                 )
             errors["base"] = error
 
@@ -567,7 +598,11 @@ class PentasunConfigFlow(_ScanSteps, ConfigFlow, domain=DOMAIN):
                     return self.async_create_entry(
                         title=_title(self._data),
                         data=self._data,
-                        options={**DEFAULT_OPTIONS, CONF_ADDRESSES: addresses},
+                        options={
+                            **DEFAULT_OPTIONS,
+                            CONF_TIMEOUT: default_timeout(self._data),
+                            CONF_ADDRESSES: addresses,
+                        },
                     )
 
         schema = vol.Schema(
@@ -598,6 +633,12 @@ class PentasunOptionsFlow(_ScanSteps, OptionsFlowWithReload):
     def _scan_target(self) -> tuple[Mapping[str, Any], str | None, list[int]]:
         entry = self.config_entry
         return entry.data, entry.entry_id, list(entry.options[CONF_ADDRESSES])
+
+    def _scan_default_timeout(self) -> float:
+        entry = self.config_entry
+        return max(
+            entry.options.get(CONF_TIMEOUT, DEFAULT_TIMEOUT), default_timeout(entry.data)
+        )
 
     async def async_step_scan_result(
         self, user_input: dict[str, Any] | None = None

@@ -40,6 +40,9 @@ DEFAULT_MESSAGE_DELAY: Final = 50  # milliseconds
 # Thermostats answer within ~40 ms; a short timeout keeps a lost request from
 # stalling the shared bus. Applied from Home Assistant 2026.10.
 DEFAULT_TIMEOUT: Final = 1.0  # seconds
+# A Modbus TCP gateway waits for the RS485 reply itself (often 1 s) and drops
+# requests that arrive meanwhile, so we have to wait longer than it does.
+DEFAULT_GATEWAY_TIMEOUT: Final = 1.5  # seconds
 DEFAULT_MIN_TEMP: Final = 5.0
 DEFAULT_MAX_TEMP: Final = 35.0
 DEFAULT_AUTO_SYNC_CLOCK: Final = False

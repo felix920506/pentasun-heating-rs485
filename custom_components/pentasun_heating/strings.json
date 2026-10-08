@@ -95,11 +95,13 @@
         "description": "Each address is asked several times, because the thermostats ignore some requests. Scanning 32 addresses takes about a minute, longer on a busy bus. Addresses other integrations use on this bus are skipped. {error}",
         "data": {
           "scan_range": "Addresses to scan",
-          "scan_count": "Number of thermostats"
+          "scan_count": "Number of thermostats",
+          "scan_timeout": "Response timeout"
         },
         "data_description": {
           "scan_range": "Thermostats leave the factory with address 1. Ranges are allowed, e.g. 1-32 or 1-255 (slower).",
-          "scan_count": "Optional. How many thermostats are on this bus. The scan stops as soon as it has found them all; if some stay silent, it keeps asking for up to a minute longer and then warns you."
+          "scan_count": "Optional. How many thermostats are on this bus. The scan stops as soon as it has found them all; if some stay silent, it keeps asking for up to a minute longer and then warns you.",
+          "scan_timeout": "Must be longer than the response timeout set in the gateway, which waits for each thermostat itself and drops requests that arrive meanwhile. 1.5 s suits a gateway set to 1000 ms; every address that doesn't answer costs this long per round."
         }
       },
       "scan_result": {
@@ -123,7 +125,7 @@
       "not_thermostat": "The device(s) at {addresses} answered, but don't look like PTB thermostats. Another kind of device on this bus may use that address.",
       "address_in_use": "Address(es) {addresses} are already used on this bus by {users}. Every device on a bus needs its own address.",
       "link_conflict": "This port or host is already used by another integration with different serial settings: {error}",
-      "missing_thermostats": "Only {found_count} of the {expected} thermostats answered, even after asking the silent addresses for another minute. Check that:\n- no two thermostats share an address (garbled replies, which this causes, came from: {garbled});\n- the wiring is reliable: A/B not swapped, bias and 120 Ω termination present, no loose terminals;\n- every thermostat is powered and its address (option C) is within the scanned range.\nAdd any missing addresses below, or go back and scan again."
+      "missing_thermostats": "Only {found_count} of the {expected} thermostats answered, even after asking the silent addresses for another minute. Check that:\n- no two thermostats share an address (garbled replies, which this causes, came from: {garbled});\n- the wiring is reliable: A/B not swapped, bias and 120 Ω termination present, no loose terminals;\n- with a Modbus TCP gateway: the response timeout is longer than the gateway's own, and request caching or automatic polling in the gateway is turned off;\n- every thermostat is powered and its address (option C) is within the scanned range.\nAdd any missing addresses below, or go back and scan again."
     },
     "abort": {
       "already_configured": "This bus is already configured.",
@@ -148,7 +150,7 @@
         },
         "data_description": {
           "addresses": "Separate with commas; ranges are allowed, e.g. 1, 2, 5-8.",
-          "timeout": "How long to wait for a thermostat to answer before asking again (up to 12 tries, spread over about 20 s). On a bus shared with other integrations this is a minimum for the whole connection. Applied from Home Assistant 2026.10.",
+          "timeout": "How long to wait for a thermostat to answer before asking again (up to 12 tries, spread over about 20 s). With a Modbus TCP gateway it must be longer than the gateway's own timeout (default 1.5 s for 1000 ms). On a bus shared with other integrations this is a minimum for the whole connection. Applied from Home Assistant 2026.10.",
           "message_delay": "Minimum pause between requests to the same thermostat. Does not slow down other devices on the bus.",
           "auto_sync_clock": "Set the thermostat clock from Home Assistant whenever it is more than 2 minutes off. Needed for the timer and schedule modes."
         }
@@ -165,11 +167,13 @@
         "description": "Each address is asked several times, because the thermostats ignore some requests. Scanning 32 addresses takes about a minute, longer on a busy bus. Addresses other integrations use on this bus are skipped. {error}",
         "data": {
           "scan_range": "Addresses to scan",
-          "scan_count": "Number of new thermostats"
+          "scan_count": "Number of new thermostats",
+          "scan_timeout": "Response timeout"
         },
         "data_description": {
           "scan_range": "Thermostats leave the factory with address 1. Ranges are allowed, e.g. 1-32 or 1-255 (slower).",
-          "scan_count": "Optional. How many thermostats were added since the last setup. The scan stops as soon as it has found them all; if some stay silent, it keeps asking for up to a minute longer and then warns you."
+          "scan_count": "Optional. How many thermostats were added since the last setup. The scan stops as soon as it has found them all; if some stay silent, it keeps asking for up to a minute longer and then warns you.",
+          "scan_timeout": "Must be longer than the response timeout set in the gateway, which waits for each thermostat itself and drops requests that arrive meanwhile. 1.5 s suits a gateway set to 1000 ms; every address that doesn't answer costs this long per round."
         }
       },
       "scan_result": {
@@ -189,7 +193,7 @@
       "address_in_use": "Address(es) {addresses} are already used on this bus by {users}. Every device on a bus needs its own address.",
       "cannot_connect": "Failed to connect to the bus. Check the port or host and port.",
       "link_conflict": "This port or host is already used by another integration with different serial settings: {error}",
-      "missing_thermostats": "Only {found_count} of the {expected} thermostats answered, even after asking the silent addresses for another minute. Check that:\n- no two thermostats share an address (garbled replies, which this causes, came from: {garbled});\n- the wiring is reliable: A/B not swapped, bias and 120 Ω termination present, no loose terminals;\n- every thermostat is powered and its address (option C) is within the scanned range.\nAdd any missing addresses below, or go back and scan again."
+      "missing_thermostats": "Only {found_count} of the {expected} thermostats answered, even after asking the silent addresses for another minute. Check that:\n- no two thermostats share an address (garbled replies, which this causes, came from: {garbled});\n- the wiring is reliable: A/B not swapped, bias and 120 Ω termination present, no loose terminals;\n- with a Modbus TCP gateway: the response timeout is longer than the gateway's own, and request caching or automatic polling in the gateway is turned off;\n- every thermostat is powered and its address (option C) is within the scanned range.\nAdd any missing addresses below, or go back and scan again."
     },
     "progress": {
       "scan": "Scanning addresses {range} for thermostats. This can take a few minutes."

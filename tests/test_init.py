@@ -525,13 +525,15 @@ async def test_reconfigure(hass: HomeAssistant, rtu_bus: ThermostatBus, mbap_bus
     assert result["errors"] == {"base": "no_devices"}
 
     mbap_bus.add(1)
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_HOST: "127.0.0.1", CONF_PORT: mbap_bus.port}
-    )
+    with patch("custom_components.pentasun_heating.bus.DEFAULT_GATEWAY_TIMEOUT", 0.3):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "127.0.0.1", CONF_PORT: mbap_bus.port}
+        )
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
     await hass.async_block_till_done()
     assert entry.data[CONF_CONNECTION_TYPE] == CONN_MODBUS_TCP
+    assert entry.options[CONF_TIMEOUT] == 0.3  # raised above the gateway's own
     assert entry.unique_id == f"127.0.0.1:{mbap_bus.port}"
     assert hass.states.get(CLIMATE_1).state == HVACMode.HEAT
 
@@ -669,6 +671,36 @@ async def test_scan_warns_about_missing(hass: HomeAssistant, rtu_bus: Thermostat
         result["flow_id"], {CONF_ADDRESSES: "1"}
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+@needs_scan
+async def test_scan_through_gateway(hass: HomeAssistant, mbap_bus: ThermostatBus) -> None:
+    """A gateway scan asks for a timeout longer than the gateway's own."""
+    mbap_bus.add(2)
+    mbap_bus.add(6)
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": CONN_MODBUS_TCP}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_HOST: "127.0.0.1", CONF_PORT: mbap_bus.port}
+    )
+    with patch("custom_components.pentasun_heating.bus.DEFAULT_GATEWAY_TIMEOUT", 0.3):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"next_step_id": "scan"}
+        )
+        schema = result["data_schema"]({"scan_range": "1-8"})
+        assert schema["scan_timeout"] == 0.3
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"scan_range": "1-8", "scan_count": 2, "scan_timeout": 0.2}
+        )
+        result = await _finish_scan(hass.config_entries.flow, result)
+        assert result["description_placeholders"]["found"] == "2, 6"
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_ADDRESSES: "2, 6"}
+        )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["options"][CONF_TIMEOUT] == 0.3  # longer default for gateways
 
 
 @needs_scan
