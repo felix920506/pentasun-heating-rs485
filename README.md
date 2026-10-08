@@ -87,8 +87,9 @@ document calls the menu key "M" and this option "C".)
 
 ### Finding the thermostats on a bus
 
-After choosing the connection, setup offers to **scan the bus** (Home Assistant
-2026.10 or newer) or to enter the addresses yourself as a list, e.g. `1, 2, 5-8`.
+After choosing the connection, setup offers to **scan the bus**, so you don't have
+to look up the address on every thermostat, or to enter the addresses yourself as a
+list, e.g. `1, 2, 5-8`.
 To add thermostats later, use *Configure → Scan for new thermostats* on the
 integration entry.
 
@@ -113,11 +114,10 @@ wiring (A/B, bias, termination, loose terminals), the power, and that every
 thermostat's address is within the scanned range.
 
 Scanning is safe on a bus shared with other devices: addresses other integrations
-use are never polled, devices that answer but don't look like a PTB thermostat
-(e.g. an energy meter) are listed but not added, and the requests go over the
-shared connection, so other integrations keep working during the scan. Home
-Assistant 2026.9 can't shorten the 10 s Modbus timeout, which would make a scan
-take tens of minutes, so there you enter the addresses manually.
+use are never polled (Home Assistant 2026.10+; 2026.9 can't tell which addresses
+they use, so check the results), devices that answer but don't look like a PTB
+thermostat (e.g. an energy meter) are listed but not added, and the requests go
+over the shared connection, so other integrations keep working during the scan.
 
 ## Entities (per thermostat)
 

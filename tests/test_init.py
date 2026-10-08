@@ -42,7 +42,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr, issue_registry as ir
 from homeassistant.util import dt as dt_util
 
-from custom_components.pentasun_heating.bus import SOCKET_BAUDRATE, scan_supported
+from custom_components.pentasun_heating.bus import SOCKET_BAUDRATE
 from custom_components.pentasun_heating.const import (
     CONF_ADDRESSES,
     CONF_AUTO_SYNC_CLOCK,
@@ -70,9 +70,6 @@ try:
 except ImportError:  # Home Assistant 2026.9
     async_get_connection_info = None
 
-needs_scan = pytest.mark.skipif(
-    not scan_supported(), reason="Scanning needs Home Assistant 2026.10 or newer"
-)
 
 needs_connection_info = pytest.mark.skipif(
     async_get_connection_info is None,
@@ -547,7 +544,6 @@ async def _finish_scan(flow_manager, result: dict) -> dict:
     return result
 
 
-@needs_scan
 async def test_scan_flow(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
     """A scan finds lossy thermostats, ignores other devices and skips used addresses."""
     rtu_bus.add(3)
@@ -576,7 +572,9 @@ async def test_scan_flow(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
     )
     result = await _finish_scan(hass.config_entries.flow, result)
     assert result["step_id"] == "scan_result"
-    assert result["description_placeholders"]["found"] == "3, 7"
+    # Home Assistant 2026.9 can't tell which addresses other integrations use
+    found = "3, 7" if async_get_connection_info is not None else "3, 7, 12"
+    assert result["description_placeholders"]["found"] == found
     assert result["description_placeholders"]["other"] == "9"
     if async_get_connection_info is not None:
         assert result["description_placeholders"]["skipped"] == "12"
@@ -590,7 +588,6 @@ async def test_scan_flow(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
     assert result["options"][CONF_ADDRESSES] == [3, 7]
 
 
-@needs_scan
 async def test_scan_stops_at_expected_count(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
     """With the number of thermostats given, the scan stops once it found them all."""
     rtu_bus.add(2)
@@ -634,7 +631,6 @@ async def _scan_setup(hass: HomeAssistant, bus: ThermostatBus, user_input: dict)
     return await _finish_scan(hass.config_entries.flow, result)
 
 
-@needs_scan
 async def test_scan_keeps_looking_for_expected(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
     """A thermostat silent through the regular rounds is still found when expected."""
     rtu_bus.add(1)
@@ -646,7 +642,6 @@ async def test_scan_keeps_looking_for_expected(hass: HomeAssistant, rtu_bus: The
     assert result["errors"] == {}
 
 
-@needs_scan
 async def test_scan_warns_about_missing(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
     """If expected thermostats never answer, the results warn and name garbled addresses."""
     rtu_bus.add(1)
@@ -673,7 +668,6 @@ async def test_scan_warns_about_missing(hass: HomeAssistant, rtu_bus: Thermostat
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
 
-@needs_scan
 async def test_scan_through_gateway(hass: HomeAssistant, mbap_bus: ThermostatBus) -> None:
     """A gateway scan asks for a timeout longer than the gateway's own."""
     mbap_bus.add(2)
@@ -703,7 +697,6 @@ async def test_scan_through_gateway(hass: HomeAssistant, mbap_bus: ThermostatBus
     assert result["options"][CONF_TIMEOUT] == 0.3  # longer default for gateways
 
 
-@needs_scan
 async def test_scan_cannot_connect(hass: HomeAssistant) -> None:
     """A scan of an unreachable bus returns to the scan form with an error."""
     bus = ThermostatBus()
@@ -727,7 +720,6 @@ async def test_scan_cannot_connect(hass: HomeAssistant) -> None:
     assert result["errors"] == {"base": "cannot_connect"}
 
 
-@needs_scan
 async def test_options_scan_adds_thermostats(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
     """Scanning from the options adds newly found thermostats to the configured ones."""
     rtu_bus.add(3)

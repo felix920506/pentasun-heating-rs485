@@ -254,16 +254,6 @@ def _hub_endpoint(hub: Any) -> tuple | None:
     return ("tcp", host, port)
 
 
-def scan_supported() -> bool:
-    """Return True if the bus can be scanned in reasonable time.
-
-    Scanning needs a short response timeout, which modbus-connection 4.12
-    (Home Assistant 2026.10) can set; with the fixed 10 s timeout of older
-    versions every empty address would take minutes.
-    """
-    return hasattr(ModbusUnit, "require_timeout")
-
-
 @dataclass
 class ScanResult:
     """What a bus scan found."""
@@ -284,12 +274,22 @@ class ScanResult:
         return max((self.expected or 0) - len(self.thermostats), 0)
 
 
-async def _async_read_once(unit: ModbusUnit) -> list[int]:
-    """One read of the register block, for scanning (no repeats)."""
+async def _async_read_once(unit: ModbusUnit, timeout: float) -> list[int]:
+    """One read of the register block, for scanning (no repeats).
+
+    The request is also cut off here after ``timeout``: Home Assistant 2026.9
+    can't shorten the link's 10 s timeout, and on later versions another
+    integration may require a longer one. The library discards a reply that
+    arrives after the request was cancelled.
+    """
     try:
-        return await unit.read_holding_registers(0, REGISTER_COUNT)
-    except IllegalDataAddressError:
-        return await unit.read_holding_registers(0, REGISTER_COUNT - 1)
+        async with asyncio.timeout(timeout):
+            try:
+                return await unit.read_holding_registers(0, REGISTER_COUNT)
+            except IllegalDataAddressError:
+                return await unit.read_holding_registers(0, REGISTER_COUNT - 1)
+    except TimeoutError as err:
+        raise ModbusTimeoutError(f"No answer within {timeout} s") from err
 
 
 async def async_scan_bus(
@@ -321,6 +321,7 @@ async def async_scan_bus(
     ``HomeAssistantError`` if the link is in use with other settings.
     """
     result = ScanResult(expected=expected)
+    scan_timeout = timeout or SCAN_TIMEOUT
     usage = async_get_bus_usage(hass, params, exclude_entry_id)
     taken = {unit for units in usage.entry_units.values() for unit in units}
     taken |= {unit for units in usage.yaml_hubs.values() for unit in units or ()}
@@ -350,7 +351,7 @@ async def async_scan_bus(
             )
             # Withdrawn before the unit is released; nobody else uses these
             # addresses, so the requirement can't clobber another integration's.
-            stack.callback(require_timeout(unit, timeout or SCAN_TIMEOUT))
+            stack.callback(require_timeout(unit, scan_timeout))
             units[address] = unit
 
         scan_round = 0
@@ -374,7 +375,7 @@ async def async_scan_bus(
                     on_progress(progress(scan_round, index / len(pending)))
                 unit = units[address]
                 try:
-                    regs = await _async_read_once(unit)
+                    regs = await _async_read_once(unit, scan_timeout)
                 except ModbusProtocolError as err:
                     if not unit.connected:
                         raise ModbusConnectionError(str(err)) from err

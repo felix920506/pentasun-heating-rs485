@@ -66,7 +66,6 @@ from .bus import (
     default_timeout,
     looks_like_thermostat,
     require_timeout,
-    scan_supported,
 )
 from .coordinator import PentasunConfigEntry
 
@@ -542,8 +541,6 @@ class PentasunConfigFlow(_ScanSteps, ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Scan the bus for thermostats or enter their addresses."""
-        if not scan_supported():
-            return await self.async_step_thermostats()
         return self.async_show_menu(
             step_id="add_thermostats", menu_options=["scan", "thermostats"]
         )
@@ -626,8 +623,6 @@ class PentasunOptionsFlow(_ScanSteps, OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Choose between the settings and a bus scan."""
-        if not scan_supported():
-            return await self.async_step_settings()
         return self.async_show_menu(step_id="init", menu_options=["settings", "scan"])
 
     def _scan_target(self) -> tuple[Mapping[str, Any], str | None, list[int]]:
