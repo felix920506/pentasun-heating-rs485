@@ -94,10 +94,12 @@
         "title": "Scan the bus",
         "description": "Each address is asked several times, because the thermostats ignore some requests. Scanning 32 addresses takes about a minute, longer on a busy bus. Addresses other integrations use on this bus are skipped. {error}",
         "data": {
-          "scan_range": "Addresses to scan"
+          "scan_range": "Addresses to scan",
+          "scan_count": "Number of thermostats"
         },
         "data_description": {
-          "scan_range": "Thermostats leave the factory with address 1. Ranges are allowed, e.g. 1-32 or 1-255 (slower)."
+          "scan_range": "Thermostats leave the factory with address 1. Ranges are allowed, e.g. 1-32 or 1-255 (slower).",
+          "scan_count": "Optional. How many thermostats are on this bus; the scan stops as soon as it has found them all instead of trying every address 6 times."
         }
       },
       "scan_result": {
@@ -161,10 +163,12 @@
         "title": "Scan the bus",
         "description": "Each address is asked several times, because the thermostats ignore some requests. Scanning 32 addresses takes about a minute, longer on a busy bus. Addresses other integrations use on this bus are skipped. {error}",
         "data": {
-          "scan_range": "Addresses to scan"
+          "scan_range": "Addresses to scan",
+          "scan_count": "Number of new thermostats"
         },
         "data_description": {
-          "scan_range": "Thermostats leave the factory with address 1. Ranges are allowed, e.g. 1-32 or 1-255 (slower)."
+          "scan_range": "Thermostats leave the factory with address 1. Ranges are allowed, e.g. 1-32 or 1-255 (slower).",
+          "scan_count": "Optional. How many thermostats were added since the last setup; the scan stops as soon as it has found them all instead of trying every address 6 times."
         }
       },
       "scan_result": {

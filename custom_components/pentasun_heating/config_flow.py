@@ -73,6 +73,7 @@ _LOGGER = logging.getLogger(__name__)
 
 CONF_SKIP_CHECK = "skip_check"
 CONF_SCAN_RANGE = "scan_range"
+CONF_SCAN_COUNT = "scan_count"
 
 DEFAULT_OPTIONS: dict[str, Any] = {
     CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
@@ -279,6 +280,7 @@ class _ScanSteps:
     hass: Any
     _scan_task: asyncio.Task[ScanResult] | None = None
     _scan_range: list[int]
+    _scan_count: int | None = None
     _scan_error: str | None = None
     _scan_error_detail: str = ""
     _scan_result: ScanResult | None = None
@@ -300,9 +302,18 @@ class _ScanSteps:
             except InvalidAddresses:
                 errors[CONF_SCAN_RANGE] = "invalid_addresses"
             else:
+                count = user_input.get(CONF_SCAN_COUNT)
+                self._scan_count = int(count) if count else None
                 return await self.async_step_scan_progress()
         schema = vol.Schema(
-            {vol.Required(CONF_SCAN_RANGE, default=DEFAULT_SCAN_RANGE): str}
+            {
+                vol.Required(CONF_SCAN_RANGE, default=DEFAULT_SCAN_RANGE): str,
+                vol.Optional(CONF_SCAN_COUNT): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1, max=255, step=1, mode=selector.NumberSelectorMode.BOX
+                    )
+                ),
+            }
         )
         return self.async_show_form(
             step_id="scan",
@@ -324,6 +335,7 @@ class _ScanSteps:
                     build_params(data),
                     addresses,
                     exclude_entry_id=exclude_entry_id,
+                    expected=self._scan_count,
                     on_progress=self.async_update_progress,
                 ),
                 f"{DOMAIN} bus scan",

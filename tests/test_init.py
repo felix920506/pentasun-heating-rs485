@@ -589,6 +589,34 @@ async def test_scan_flow(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
 
 
 @needs_scan
+async def test_scan_stops_at_expected_count(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
+    """With the number of thermostats given, the scan stops once it found them all."""
+    rtu_bus.add(2)
+    rtu_bus.add(5)
+    rtu_bus.add(30)  # beyond the expected count: never reached
+
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": CONN_RTU_OVER_TCP}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_HOST: "127.0.0.1", CONF_PORT: rtu_bus.port}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "scan"}
+    )
+    requests = len(rtu_bus.requests)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"scan_range": "1-32", "scan_count": 2}
+    )
+    result = await _finish_scan(hass.config_entries.flow, result)
+    assert result["step_id"] == "scan_result"
+    assert result["description_placeholders"]["found"] == "2, 5"
+    scanned = [unit for unit, _ in rtu_bus.requests[requests:]]
+    assert scanned == [1, 2, 3, 4, 5]
+
+
+@needs_scan
 async def test_scan_cannot_connect(hass: HomeAssistant) -> None:
     """A scan of an unreachable bus returns to the scan form with an error."""
     bus = ThermostatBus()

@@ -50,6 +50,11 @@ before anything is saved, so you can add one the scan missed. Scanning 1–32 ta
 about a minute; on a real bus with one thermostat it found it in each of 3 runs
 (48 s each).
 
+If you enter **how many thermostats** there are (or, when scanning from
+*Configure*, how many are new), the scan stops as soon as it has found them all.
+On the same bus that took 1–26 s instead of 48 s. Devices beyond the last
+thermostat found aren't asked, so the list of other devices may be incomplete.
+
 Scanning is safe on a bus shared with other devices: addresses other integrations
 use are never polled, devices that answer but don't look like a PTB thermostat
 (e.g. an energy meter) are listed but not added, and the requests go over the

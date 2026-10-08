@@ -275,6 +275,7 @@ async def async_scan_bus(
     addresses: Iterable[int],
     *,
     exclude_entry_id: str | None = None,
+    expected: int | None = None,
     on_progress: Callable[[float], None] | None = None,
 ) -> ScanResult:
     """Look for thermostats on the bus.
@@ -284,6 +285,7 @@ async def async_scan_bus(
     address drops out as soon as anything answers. Addresses other
     integrations use on this bus are never polled. Requests go over the
     shared connection, so other integrations keep working during a scan.
+    With ``expected`` set, the scan stops once that many thermostats answered.
 
     Raises ``ModbusConnectionError`` if the bus can't be reached and
     ``HomeAssistantError`` if the link is in use with other settings.
@@ -327,6 +329,10 @@ async def async_scan_bus(
                 else:
                     result.other_devices.append(address)
                 _LOGGER.debug("Scan: address %s answered %s", address, regs)
+                if expected and len(result.thermostats) >= expected:
+                    _LOGGER.debug("Scan: found all %s thermostats", expected)
+                    remaining.clear()
+                    break
             if not remaining:
                 break
 
