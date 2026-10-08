@@ -52,8 +52,14 @@ about a minute; on a real bus with one thermostat it found it in each of 3 runs
 
 If you enter **how many thermostats** there are (or, when scanning from
 *Configure*, how many are new), the scan stops as soon as it has found them all.
-On the same bus that took 1–26 s instead of 48 s. Devices beyond the last
-thermostat found aren't asked, so the list of other devices may be incomplete.
+Devices beyond the last thermostat found aren't asked, so the list of other
+devices may be incomplete. If fewer have answered after the 6 rounds, the scan
+keeps asking the silent addresses for up to another minute. On a bus with 8
+thermostats this found the 8th in that extra time in 2 of 3 scans. If some still
+don't answer, the results warn you and list any addresses with garbled replies.
+Garbled replies usually mean two thermostats share an address. Otherwise check the
+wiring (A/B, bias, termination, loose terminals), the power, and that every
+thermostat's address is within the scanned range.
 
 Scanning is safe on a bus shared with other devices: addresses other integrations
 use are never polled, devices that answer but don't look like a PTB thermostat

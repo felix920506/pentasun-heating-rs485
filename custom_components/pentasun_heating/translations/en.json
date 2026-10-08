@@ -99,7 +99,7 @@
         },
         "data_description": {
           "scan_range": "Thermostats leave the factory with address 1. Ranges are allowed, e.g. 1-32 or 1-255 (slower).",
-          "scan_count": "Optional. How many thermostats are on this bus; the scan stops as soon as it has found them all instead of trying every address 6 times."
+          "scan_count": "Optional. How many thermostats are on this bus. The scan stops as soon as it has found them all; if some stay silent, it keeps asking for up to a minute longer and then warns you."
         }
       },
       "scan_result": {
@@ -122,7 +122,8 @@
       "invalid_addresses": "Enter addresses between 1 and 255, e.g. 1, 2, 5-8.",
       "not_thermostat": "The device(s) at {addresses} answered, but don't look like PTB thermostats. Another kind of device on this bus may use that address.",
       "address_in_use": "Address(es) {addresses} are already used on this bus by {users}. Every device on a bus needs its own address.",
-      "link_conflict": "This port or host is already used by another integration with different serial settings: {error}"
+      "link_conflict": "This port or host is already used by another integration with different serial settings: {error}",
+      "missing_thermostats": "Only {found_count} of the {expected} thermostats answered, even after asking the silent addresses for another minute. Check that:\n- no two thermostats share an address (garbled replies, which this causes, came from: {garbled});\n- the wiring is reliable: A/B not swapped, bias and 120 Ω termination present, no loose terminals;\n- every thermostat is powered and its address (option C) is within the scanned range.\nAdd any missing addresses below, or go back and scan again."
     },
     "abort": {
       "already_configured": "This bus is already configured.",
@@ -168,7 +169,7 @@
         },
         "data_description": {
           "scan_range": "Thermostats leave the factory with address 1. Ranges are allowed, e.g. 1-32 or 1-255 (slower).",
-          "scan_count": "Optional. How many thermostats were added since the last setup; the scan stops as soon as it has found them all instead of trying every address 6 times."
+          "scan_count": "Optional. How many thermostats were added since the last setup. The scan stops as soon as it has found them all; if some stay silent, it keeps asking for up to a minute longer and then warns you."
         }
       },
       "scan_result": {
@@ -187,7 +188,8 @@
       "invalid_temp_range": "The maximum must be above the minimum.",
       "address_in_use": "Address(es) {addresses} are already used on this bus by {users}. Every device on a bus needs its own address.",
       "cannot_connect": "Failed to connect to the bus. Check the port or host and port.",
-      "link_conflict": "This port or host is already used by another integration with different serial settings: {error}"
+      "link_conflict": "This port or host is already used by another integration with different serial settings: {error}",
+      "missing_thermostats": "Only {found_count} of the {expected} thermostats answered, even after asking the silent addresses for another minute. Check that:\n- no two thermostats share an address (garbled replies, which this causes, came from: {garbled});\n- the wiring is reliable: A/B not swapped, bias and 120 Ω termination present, no loose terminals;\n- every thermostat is powered and its address (option C) is within the scanned range.\nAdd any missing addresses below, or go back and scan again."
     },
     "progress": {
       "scan": "Scanning addresses {range} for thermostats. This can take a few minutes."

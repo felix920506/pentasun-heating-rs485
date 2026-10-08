@@ -55,6 +55,7 @@ from .const import (
     REGISTER_COUNT,
     REQUEST_ATTEMPTS_PER_BURST,
     REQUEST_BURST_PAUSES,
+    SCAN_MISSING_TIME,
     SCAN_ROUNDS,
     SCAN_TIMEOUT,
 )
@@ -259,6 +260,15 @@ class ScanResult:
     """Addresses where a device answered that doesn't look like a thermostat."""
     skipped: list[int] = field(default_factory=list)
     """Addresses not scanned because another integration uses them."""
+    garbled: list[int] = field(default_factory=list)
+    """Addresses with corrupted replies, e.g. two devices sharing the address."""
+    expected: int | None = None
+    """How many thermostats the user said to look for."""
+
+    @property
+    def missing(self) -> int:
+        """Return how many of the expected thermostats weren't found."""
+        return max((self.expected or 0) - len(self.thermostats), 0)
 
 
 async def _async_read_once(unit: ModbusUnit) -> list[int]:
@@ -285,17 +295,35 @@ async def async_scan_bus(
     address drops out as soon as anything answers. Addresses other
     integrations use on this bus are never polled. Requests go over the
     shared connection, so other integrations keep working during a scan.
-    With ``expected`` set, the scan stops once that many thermostats answered.
+
+    With ``expected`` set, the scan stops once that many thermostats
+    answered. If fewer did after the regular rounds, the silent addresses
+    are asked for up to ``SCAN_MISSING_TIME`` seconds more.
 
     Raises ``ModbusConnectionError`` if the bus can't be reached and
     ``HomeAssistantError`` if the link is in use with other settings.
     """
-    result = ScanResult()
+    result = ScanResult(expected=expected)
     usage = async_get_bus_usage(hass, params, exclude_entry_id)
     taken = {unit for units in usage.entry_units.values() for unit in units}
     taken |= {unit for units in usage.yaml_hubs.values() for unit in units or ()}
     remaining = [address for address in addresses if address not in taken]
     result.skipped = sorted(set(addresses) & taken)
+    garbled: set[int] = set()
+    loop = asyncio.get_running_loop()
+    deadline: float | None = None
+
+    def progress(scan_round: int, done: float) -> float:
+        regular = min((scan_round + done) / SCAN_ROUNDS, 1)
+        if not expected:
+            return regular
+        # The last quarter of the bar is the extra time for missing thermostats.
+        if deadline is None:
+            return 0.75 * regular
+        return 1 - 0.25 * max(deadline - loop.time(), 0) / SCAN_MISSING_TIME
+
+    def found_all() -> bool:
+        return bool(expected) and len(result.thermostats) >= expected
 
     async with AsyncExitStack() as stack:
         units: dict[int, ModbusUnit] = {}
@@ -308,15 +336,36 @@ async def async_scan_bus(
             stack.callback(require_timeout(unit, SCAN_TIMEOUT))
             units[address] = unit
 
-        for scan_round in range(SCAN_ROUNDS):
+        scan_round = 0
+        while remaining and not found_all():
+            if deadline is not None and loop.time() >= deadline:
+                break
+            if scan_round >= SCAN_ROUNDS:
+                if not expected:
+                    break
+                if deadline is None:
+                    _LOGGER.debug(
+                        "Scan: %s of %s thermostats found, still asking %s",
+                        len(result.thermostats), expected, list(remaining),
+                    )
+                    deadline = loop.time() + SCAN_MISSING_TIME
             pending = list(remaining)
             for index, address in enumerate(pending):
+                if deadline is not None and loop.time() >= deadline:
+                    break
                 if on_progress:
-                    on_progress((scan_round + index / len(pending)) / SCAN_ROUNDS)
+                    on_progress(progress(scan_round, index / len(pending)))
                 unit = units[address]
                 try:
                     regs = await _async_read_once(unit)
-                except (ModbusTimeoutError, ModbusProtocolError) as err:
+                except ModbusProtocolError as err:
+                    if not unit.connected:
+                        raise ModbusConnectionError(str(err)) from err
+                    # Two devices answering at once corrupt each other's reply.
+                    _LOGGER.debug("Scan: garbled reply from address %s: %s", address, err)
+                    garbled.add(address)
+                    continue
+                except ModbusTimeoutError as err:
                     if not unit.connected:
                         raise ModbusConnectionError(str(err)) from err
                     continue
@@ -329,13 +378,12 @@ async def async_scan_bus(
                 else:
                     result.other_devices.append(address)
                 _LOGGER.debug("Scan: address %s answered %s", address, regs)
-                if expected and len(result.thermostats) >= expected:
+                if found_all():
                     _LOGGER.debug("Scan: found all %s thermostats", expected)
-                    remaining.clear()
                     break
-            if not remaining:
-                break
+            scan_round += 1
 
+    result.garbled = sorted(garbled)
     result.thermostats.sort()
     result.other_devices.sort()
     return result

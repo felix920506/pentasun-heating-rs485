@@ -92,4 +92,7 @@ SETPOINT_MAX: Final = 50.0
 # thermostat that ignores half its requests is still found ~98 % of the time.
 SCAN_ROUNDS: Final = 6
 SCAN_TIMEOUT: Final = 0.25  # seconds; thermostats answer within ~60 ms
+# With the number of thermostats known, keep asking the silent addresses for
+# up to this many seconds after the regular rounds before giving up.
+SCAN_MISSING_TIME: Final = 60.0
 DEFAULT_SCAN_RANGE: Final = "1-32"

@@ -49,6 +49,8 @@ class ThermostatBus:
         self.drop_next = 0  # ignore this many upcoming requests, like the real thermostat
         self.lose_writes = 0  # acknowledge but don't apply this many valid writes
         self.loss_rate = 0.0  # ignore this share of requests at random (seeded)
+        self.ignore: dict[int, int] = {}  # ignore this many requests to a unit
+        self.garbled: set[int] = set()  # units whose replies collide (bad CRC)
         self._rng = random.Random(1)
 
     def add(self, unit: int, regs: list[int] | None = None) -> list[int]:
@@ -63,6 +65,9 @@ class ThermostatBus:
             self.drop_next -= 1
             return None
         if self.loss_rate and self._rng.random() < self.loss_rate:
+            return None
+        if self.ignore.get(unit):
+            self.ignore[unit] -= 1
             return None
         regs = self.units.get(unit)
         if regs is None:
@@ -106,7 +111,10 @@ class ThermostatBus:
                 frame = await reader.readexactly(8)  # fc 3 and 6 requests are 8 bytes
                 assert crc16(frame[:-2]) == struct.unpack("<H", frame[-2:])[0]
                 if (resp := self.handle(frame[0], frame[1:6])) is not None:
-                    writer.write(build_rtu_frame(frame[0], resp))
+                    reply = build_rtu_frame(frame[0], resp)
+                    if frame[0] in self.garbled:
+                        reply = reply[:-1] + bytes([reply[-1] ^ 0xFF])
+                    writer.write(reply)
                     await writer.drain()
         except (asyncio.IncompleteReadError, ConnectionError):
             writer.close()

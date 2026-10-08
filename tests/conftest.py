@@ -47,6 +47,7 @@ def fast_shared_connections() -> Generator[None]:
         patch("custom_components.pentasun_heating.config_flow.DEFAULT_TIMEOUT", 0.05),
         patch("custom_components.pentasun_heating.bus.REQUEST_BURST_PAUSES", (0.01, 0.02)),
         patch("custom_components.pentasun_heating.bus.SCAN_TIMEOUT", 0.05),
+        patch("custom_components.pentasun_heating.bus.SCAN_MISSING_TIME", 1.0),
         patch.dict(
             "custom_components.pentasun_heating.config_flow.DEFAULT_OPTIONS",
             {"timeout": 0.05},

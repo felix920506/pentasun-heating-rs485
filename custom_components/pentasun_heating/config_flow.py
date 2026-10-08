@@ -369,7 +369,16 @@ class _ScanSteps:
             "found": format_addresses(result.thermostats) or "-",
             "other": format_addresses(result.other_devices) or "-",
             "skipped": format_addresses(result.skipped) or "-",
+            "found_count": str(len(result.thermostats)),
+            "expected": str(result.expected or ""),
+            "garbled": format_addresses(result.garbled) or "-",
         }
+
+    def _scan_errors(self, user_input: dict[str, Any] | None) -> dict[str, str]:
+        """Warn when the scan found fewer thermostats than the user expected."""
+        if user_input is None and self._scan_result and self._scan_result.missing:
+            return {"base": "missing_thermostats"}
+        return {}
 
 
 class PentasunConfigFlow(_ScanSteps, ConfigFlow, domain=DOMAIN):
@@ -523,7 +532,11 @@ class PentasunConfigFlow(_ScanSteps, ConfigFlow, domain=DOMAIN):
         """Confirm the thermostats the scan found."""
         found = self._scan_result.thermostats if self._scan_result else []
         return await self._async_addresses_step(
-            "scan_result", user_input, format_addresses(found), self._scan_placeholders()
+            "scan_result",
+            user_input,
+            format_addresses(found),
+            self._scan_placeholders(),
+            self._scan_errors(user_input),
         )
 
     async def _async_addresses_step(
@@ -532,8 +545,9 @@ class PentasunConfigFlow(_ScanSteps, ConfigFlow, domain=DOMAIN):
         user_input: dict[str, Any] | None,
         default: str,
         extra_placeholders: dict[str, str] | None = None,
+        errors: dict[str, str] | None = None,
     ) -> ConfigFlowResult:
-        errors: dict[str, str] = {}
+        errors = dict(errors or {})
         placeholders = dict.fromkeys(PROBE_PLACEHOLDERS, "")
         if user_input is not None:
             try:
@@ -590,7 +604,7 @@ class PentasunOptionsFlow(_ScanSteps, OptionsFlowWithReload):
     ) -> ConfigFlowResult:
         """Add the thermostats the scan found to the existing ones."""
         entry = self.config_entry
-        errors: dict[str, str] = {}
+        errors = self._scan_errors(user_input)
         placeholders = dict.fromkeys(PROBE_PLACEHOLDERS, "") | self._scan_placeholders()
         if user_input is not None:
             try:

@@ -616,6 +616,61 @@ async def test_scan_stops_at_expected_count(hass: HomeAssistant, rtu_bus: Thermo
     assert scanned == [1, 2, 3, 4, 5]
 
 
+async def _scan_setup(hass: HomeAssistant, bus: ThermostatBus, user_input: dict) -> dict:
+    """Run a setup scan on ``bus`` and return the results step."""
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": CONN_RTU_OVER_TCP}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_HOST: "127.0.0.1", CONF_PORT: bus.port}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "scan"}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], user_input)
+    return await _finish_scan(hass.config_entries.flow, result)
+
+
+@needs_scan
+async def test_scan_keeps_looking_for_expected(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
+    """A thermostat silent through the regular rounds is still found when expected."""
+    rtu_bus.add(1)
+    rtu_bus.add(3)
+    rtu_bus.ignore[3] = 8  # silent for more than the 6 regular rounds
+
+    result = await _scan_setup(hass, rtu_bus, {"scan_range": "1-4", "scan_count": 2})
+    assert result["description_placeholders"]["found"] == "1, 3"
+    assert result["errors"] == {}
+
+
+@needs_scan
+async def test_scan_warns_about_missing(hass: HomeAssistant, rtu_bus: ThermostatBus) -> None:
+    """If expected thermostats never answer, the results warn and name garbled addresses."""
+    rtu_bus.add(1)
+    rtu_bus.add(2)
+    rtu_bus.garbled.add(2)  # like two thermostats sharing address 2
+
+    requests = len(rtu_bus.requests)
+    result = await _scan_setup(hass, rtu_bus, {"scan_range": "1-4", "scan_count": 3})
+    assert result["step_id"] == "scan_result"
+    assert result["errors"] == {"base": "missing_thermostats"}
+    placeholders = result["description_placeholders"]
+    assert placeholders["found"] == "1"
+    assert placeholders["found_count"] == "1"
+    assert placeholders["expected"] == "3"
+    assert placeholders["garbled"] == "2"
+    # The silent addresses were asked beyond the 6 regular rounds
+    scanned = [unit for unit, _ in rtu_bus.requests[requests:]]
+    assert scanned.count(4) > 6
+
+    # The warning is only shown with the results, not after submitting
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_ADDRESSES: "1"}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
 @needs_scan
 async def test_scan_cannot_connect(hass: HomeAssistant) -> None:
     """A scan of an unreachable bus returns to the scan form with an error."""
